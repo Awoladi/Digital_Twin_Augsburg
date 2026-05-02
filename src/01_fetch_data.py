@@ -31,7 +31,11 @@ out skel qt;
 
 def fetch_osm_buildings() -> dict:
     data = urllib.parse.urlencode({"data": OVERPASS_QUERY}).encode()
-    req  = urllib.request.Request(OVERPASS_URL, data=data)
+    req  = urllib.request.Request(OVERPASS_URL, data=data, headers={
+        "User-Agent":   "DigitalTwinAugsburg/0.1",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept":       "application/json",
+    })
     with urllib.request.urlopen(req, timeout=90) as resp:
         return json.loads(resp.read())
 
@@ -73,4 +77,4 @@ if __name__ == "__main__":
     BUILDINGS_GEOJSON.parent.mkdir(parents=True, exist_ok=True)
     BUILDINGS_GEOJSON.write_text(json.dumps(gj, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"  {len(gj['features'])} buildings saved → {BUILDINGS_GEOJSON}")
+    print(f"  {len(gj['features'])} buildings saved -> {BUILDINGS_GEOJSON}")

@@ -56,7 +56,7 @@ def preprocess(input_path: Path = BUILDINGS_GEOJSON) -> gpd.GeoDataFrame:
 
     out = DATA_INTERIM / "georgsvorstadt_clean.geojson"
     gdf.to_file(out, driver="GeoJSON")
-    print(f"  Saved → {out}")
+    print(f"  Saved -> {out}")
     return gdf
 
 

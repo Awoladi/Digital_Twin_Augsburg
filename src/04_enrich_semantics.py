@@ -23,7 +23,7 @@ TABULA_MAP = {
     "detached":    "EFH_1918_DE",
     "commercial":  "NWG_1970_DE",
     "retail":      "NWG_1970_DE",
-    "yes":         "MFH_1960_DE",   # unknown type → default
+    "yes":         "MFH_1960_DE",   # unknown type - default
 }
 
 
@@ -52,7 +52,7 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
     oh  = f.by_type("IfcOwnerHistory")[0]
     gdf = gpd.read_file(geojson_path)
 
-    # Build a lookup: building name → GeoDataFrame row
+    # Build a lookup: building name -> GeoDataFrame row
     name_map = {
         str(row.get("name") or f"Gebaeude_{row.get('osm_id', i)}"): row
         for i, (_, row) in enumerate(gdf.iterrows())
@@ -90,7 +90,7 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
 
     out = ifc_path.parent / ifc_path.name.replace(".ifc", "_LOD200.ifc")
     f.write(str(out))
-    print(f"Enriched {enriched} buildings → {out}")
+    print(f"Enriched {enriched} buildings -> {out}")
 
 
 if __name__ == "__main__":

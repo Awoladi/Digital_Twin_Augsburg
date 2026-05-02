@@ -1,160 +1,146 @@
 """
 Phase 3 – IFC-Generierung (LOD 100)
-Reads cleaned GeoJSON and produces an IFC 4 file with one IfcBuilding
-per footprint, extruded to the derived height.
+Reads cleaned GeoJSON and produces an IFC 4 file.
+
+Hierarchy per building:
+  IfcProject > IfcSite > IfcBuilding > IfcBuildingStorey > IfcBuildingElementProxy
+Geometry lives on the proxy so BlenderBIM renders it correctly.
 """
 
-import sys, math, uuid
+import sys, math
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from configs.settings import DATA_INTERIM, IFC_OUTPUT, PROJECT_NAME, SITE_NAME, BBOX
 
 import geopandas as gpd
 import ifcopenshell
-import ifcopenshell.api as api
+import ifcopenshell.api as ifc_api
 from shapely.geometry import mapping
 
 
-# ---------------------------------------------------------------------------
-# IFC helper utilities
-# ---------------------------------------------------------------------------
+def _dms(decimal: float):
+    deg  = int(decimal)
+    rem  = abs(decimal - deg) * 60
+    mins = int(rem)
+    secs = int((rem - mins) * 60)
+    return (deg, mins, secs, 0)
 
-def _create_ifc_model() -> ifcopenshell.file:
-    f = ifcopenshell.file(schema="IFC4")
-    return f
 
-
-def _add_owner_history(f: ifcopenshell.file):
-    person = f.createIfcPerson(FamilyName="Unknown")
-    org    = f.createIfcOrganization(Name="Digital Twin Augsburg")
-    p_and_o = f.createIfcPersonAndOrganization(ThePerson=person, TheOrganization=org)
-    app    = f.createIfcApplication(ApplicationDeveloper=org,
-                                    Version="0.1",
-                                    ApplicationFullName="DT-Augsburg",
-                                    ApplicationIdentifier="DT-AUG")
-    return f.createIfcOwnerHistory(
-        OwningUser=p_and_o, OwningApplication=app,
-        ChangeAction="ADDED", CreationDate=0,
+def _placement(f, x=0.0, y=0.0, z=0.0, relative_to=None):
+    loc = f.createIfcCartesianPoint([x, y, z])
+    ax  = f.createIfcAxis2Placement3D(
+        loc,
+        f.createIfcDirection([0.0, 0.0, 1.0]),
+        f.createIfcDirection([1.0, 0.0, 0.0]),
     )
+    return f.createIfcLocalPlacement(relative_to, ax)
 
-
-def _point(f, x, y, z=0.0):
-    return f.createIfcCartesianPoint([float(x), float(y), float(z)])
-
-
-def _axis2placement3d(f, origin=(0, 0, 0)):
-    return f.createIfcAxis2Placement3D(
-        Location=_point(f, *origin),
-        Axis=f.createIfcDirection([0.0, 0.0, 1.0]),
-        RefDirection=f.createIfcDirection([1.0, 0.0, 0.0]),
-    )
-
-
-def _local_placement(f, origin=(0, 0, 0), relative_to=None):
-    return f.createIfcLocalPlacement(
-        PlacementRelTo=relative_to,
-        RelativePlacement=_axis2placement3d(f, origin),
-    )
-
-
-def _footprint_to_ifc_solid(f, coords_wgs84: list, ref_lon: float, ref_lat: float, height: float):
-    """Convert lon/lat polygon to a flat IFC extruded solid in metres."""
-    def to_local(lon, lat):
-        x = (lon - ref_lon) * math.cos(math.radians(ref_lat)) * 111_320
-        y = (lat - ref_lat) * 111_320
-        return x, y
-
-    pts_2d = [f.createIfcCartesianPoint(list(to_local(lon, lat)))
-              for lon, lat in coords_wgs84[:-1]]   # drop closing point
-
-    polyline   = f.createIfcPolyline(pts_2d + [pts_2d[0]])
-    profile    = f.createIfcArbitraryClosedProfileDef("AREA", None, polyline)
-    direction  = f.createIfcDirection([0.0, 0.0, 1.0])
-    placement  = _axis2placement3d(f)
-    return f.createIfcExtrudedAreaSolid(profile, placement, direction, float(height))
-
-
-# ---------------------------------------------------------------------------
-# Main builder
-# ---------------------------------------------------------------------------
 
 def build_ifc(geojson_path: Path, output_path: Path) -> None:
     gdf = gpd.read_file(geojson_path)
-    f   = _create_ifc_model()
-    oh  = _add_owner_history(f)
 
-    units = f.createIfcUnitAssignment([
-        f.createIfcSIUnit(None, "LENGTHUNIT", None, "METRE"),
-        f.createIfcSIUnit(None, "AREAUNIT",   None, "SQUARE_METRE"),
-        f.createIfcSIUnit(None, "VOLUMEUNIT", None, "CUBIC_METRE"),
-    ])
+    # ------------------------------------------------------------------
+    # IFC model bootstrap
+    # ------------------------------------------------------------------
+    model = ifcopenshell.file(schema="IFC4")
 
-    ctx = f.createIfcGeometricRepresentationContext(
-        None, "Model", 3, 1e-5,
-        _axis2placement3d(f),
-        f.createIfcDirection([1.0, 0.0]),
-    )
+    project = ifc_api.run("root.create_entity", model, ifc_class="IfcProject", name=PROJECT_NAME)
+    ifc_api.run("unit.assign_unit", model)
 
-    project = f.createIfcProject(
-        ifcopenshell.guid.new(), oh,
-        Name=PROJECT_NAME,
-        UnitsInContext=units,
-        RepresentationContexts=[ctx],
-    )
+    # Two-level context: Model > Body (required by BlenderBIM)
+    model_ctx = ifc_api.run("context.add_context", model, context_type="Model")
+    body_ctx  = ifc_api.run("context.add_context", model,
+                            context_type="Model",
+                            context_identifier="Body",
+                            target_view="MODEL_VIEW",
+                            parent=model_ctx)
 
+    # ------------------------------------------------------------------
+    # Site
+    # ------------------------------------------------------------------
     ref_lat = (BBOX["min_lat"] + BBOX["max_lat"]) / 2
     ref_lon = (BBOX["min_lon"] + BBOX["max_lon"]) / 2
 
-    site_pl = _local_placement(f)
-    site = f.createIfcSite(
-        ifcopenshell.guid.new(), oh,
-        Name=SITE_NAME,
-        CompositionType="ELEMENT",
-        ObjectPlacement=site_pl,
-        RefLatitude=_dms(ref_lat),
-        RefLongitude=_dms(ref_lon),
-    )
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), oh, None, None, project, [site])
+    site = ifc_api.run("root.create_entity", model, ifc_class="IfcSite", name=SITE_NAME)
+    ifc_api.run("aggregate.assign_object", model, relating_object=project, products=[site])
+    site.RefLatitude  = _dms(ref_lat)
+    site.RefLongitude = _dms(ref_lon)
+    site.ObjectPlacement = _placement(model)
 
-    buildings = []
-    skipped   = 0
-    for _, row in gdf.iterrows():
+    def to_local(lon, lat):
+        x = (lon - ref_lon) * math.cos(math.radians(ref_lat)) * 111_320
+        y = (lat - ref_lat) * 111_320
+        return float(x), float(y)
+
+    # ------------------------------------------------------------------
+    # Buildings
+    # ------------------------------------------------------------------
+    built   = 0
+    skipped = 0
+
+    for i, (_, row) in enumerate(gdf.iterrows()):
         try:
             geom   = row.geometry
             coords = list(mapping(geom)["coordinates"][0])
-            height = float(row.get("height_m", 9.6))
+            height = float(row.get("height_m") or 9.6)
+            if height <= 0:
+                height = 9.6
+            name = str(row.get("name") or f"Gebaeude_{row.get('osm_id', i)}")
 
-            solid  = _footprint_to_ifc_solid(f, coords, ref_lon, ref_lat, height)
-            shape  = f.createIfcShapeRepresentation(ctx, "Body", "SweptSolid", [solid])
-            prod_repr = f.createIfcProductDefinitionShape(None, None, [shape])
+            # Local metre coordinates for the footprint ring
+            local_xy = [to_local(lon, lat) for lon, lat in coords[:-1]]
+            cx = sum(p[0] for p in local_xy) / len(local_xy)
+            cy = sum(p[1] for p in local_xy) / len(local_xy)
 
-            bldg_pl = _local_placement(f, relative_to=site_pl)
-            bldg = f.createIfcBuilding(
-                ifcopenshell.guid.new(), oh,
-                Name=str(row.get("name") or f"Gebaeude_{row.get('osm_id', _)}"),
-                CompositionType="ELEMENT",
-                ObjectPlacement=bldg_pl,
-                Representation=prod_repr,
+            # ---- IfcBuilding (spatial container, no geometry) --------
+            building = ifc_api.run("root.create_entity", model, ifc_class="IfcBuilding", name=name)
+            ifc_api.run("aggregate.assign_object", model, relating_object=site, products=[building])
+            building.ObjectPlacement = _placement(model, cx, cy, 0.0, site.ObjectPlacement)
+
+            # ---- IfcBuildingStorey -----------------------------------
+            storey = ifc_api.run("root.create_entity", model, ifc_class="IfcBuildingStorey", name="EG")
+            ifc_api.run("aggregate.assign_object", model, relating_object=building, products=[storey])
+            storey.ObjectPlacement = _placement(model, 0.0, 0.0, 0.0, building.ObjectPlacement)
+
+            # ---- IfcBuildingElementProxy (carries the geometry) ------
+            proxy = ifc_api.run("root.create_entity", model,
+                                ifc_class="IfcBuildingElementProxy", name=name)
+            ifc_api.run("spatial.assign_container", model,
+                        relating_structure=storey, products=[proxy])
+            proxy.ObjectPlacement = _placement(model, 0.0, 0.0, 0.0, storey.ObjectPlacement)
+
+            # ---- Footprint polygon (relative to building centroid) ---
+            rel_xy = [(x - cx, y - cy) for x, y in local_xy]
+            pts_2d = [model.createIfcCartesianPoint([x, y]) for x, y in rel_xy]
+            pts_2d.append(pts_2d[0])          # close the loop
+            polyline = model.createIfcPolyline(pts_2d)
+            profile  = model.createIfcArbitraryClosedProfileDef("AREA", None, polyline)
+
+            # ---- Extruded solid -------------------------------------
+            solid_ax = model.createIfcAxis2Placement3D(
+                model.createIfcCartesianPoint([0.0, 0.0, 0.0]),
+                model.createIfcDirection([0.0, 0.0, 1.0]),
+                model.createIfcDirection([1.0, 0.0, 0.0]),
             )
-            buildings.append(bldg)
+            solid = model.createIfcExtrudedAreaSolid(
+                profile, solid_ax,
+                model.createIfcDirection([0.0, 0.0, 1.0]),
+                height,
+            )
+
+            shape_repr = model.createIfcShapeRepresentation(body_ctx, "Body", "SweptSolid", [solid])
+            proxy.Representation = model.createIfcProductDefinitionShape(None, None, [shape_repr])
+
+            built += 1
+
         except Exception as exc:
             skipped += 1
             continue
 
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), oh, None, None, site, buildings)
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    f.write(str(output_path))
-    print(f"IFC written → {output_path}")
-    print(f"  {len(buildings)} buildings | {skipped} skipped")
-
-
-def _dms(decimal: float):
-    deg = int(decimal)
-    rem = abs(decimal - deg) * 60
-    mins = int(rem)
-    secs = int((rem - mins) * 60)
-    return (deg, mins, secs, 0)
+    model.write(str(output_path))
+    print(f"IFC written -> {output_path}")
+    print(f"  {built} buildings | {skipped} skipped")
 
 
 if __name__ == "__main__":

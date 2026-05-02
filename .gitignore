@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.env
+*.egg-info/
+
+# Raw geodata (large binaries)
+data/raw/
+data/interim/
+data/output/
+
+# Keep directory structure
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/output/ifc/.gitkeep
+
+# QGIS project files
+*.qgz
+*.qgs~
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/

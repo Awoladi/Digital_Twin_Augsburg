@@ -65,7 +65,8 @@ def _load_alkis_lookup(gdf_metric: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 def enrich(ifc_path: Path, geojson_path: Path) -> None:
     f   = ifcopenshell.open(str(ifc_path))
-    oh  = f.by_type("IfcOwnerHistory")[0]
+    oh_list = f.by_type("IfcOwnerHistory")
+    oh = oh_list[0] if oh_list else None
     gdf = gpd.read_file(geojson_path)
 
     # Reproject to metric CRS for area and spatial join

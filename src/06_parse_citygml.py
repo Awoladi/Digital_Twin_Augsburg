@@ -1,11 +1,16 @@
 """
 Phase 6 – CityGML-Parser (BayernAtlas LoD2)
-Reads all .gml files in data/raw/citygml/, extracts building footprints
-and official heights, writes data/interim/georgsvorstadt_citygml.geojson.
+Reads all .gml files in data/raw/citygml/ and writes:
+  - data/interim/georgsvorstadt_citygml.geojson   (footprints + heights)
+  - data/interim/georgsvorstadt_citygml_surfaces.json  (LoD2 3D surfaces per gml_id)
 
-Height logic (preferred over OSM tags):
-  wall_height = NiedrigsteTraufeDesGebaeudes - HoeheGrund  (eave, no roof)
-  fallback    = HoeheDach - HoeheGrund                     (total incl. roof)
+Height logic:
+  wall_height = NiedrigsteTraufeDesGebaeudes - HoeheGrund  (eave, for box fallback)
+  fallback    = HoeheDach - HoeheGrund
+
+Surfaces JSON structure per gml_id:
+  { "cx_utm": float, "cy_utm": float, "h_grund": float,
+    "ground": [[x,y,z],...], "walls": [[[x,y,z],...]], "roofs": [[[x,y,z],...]] }
 """
 
 import sys, json
@@ -15,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from configs.settings import CITYGML_DIR, DATA_INTERIM, CRS_SOURCE, CRS_WGS84, BBOX
 
 import geopandas as gpd
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, box as shapely_box
+from pyproj import Transformer
 
 NS = {
     "bldg": "http://www.opengis.net/citygml/building/1.0",
@@ -25,7 +31,6 @@ NS = {
 
 
 def _str_attrs(building) -> dict:
-    """Extract all gen:stringAttribute values as a flat dict."""
     attrs = {}
     for el in building.findall("gen:stringAttribute", NS):
         name = el.get("name")
@@ -35,34 +40,57 @@ def _str_attrs(building) -> dict:
     return attrs
 
 
-def _ground_polygon(building):
-    """Return Shapely Polygon from the GroundSurface (2D, EPSG:25832)."""
+def _poslist_to_pts3d(poslist_el) -> list[list[float]]:
+    """Parse gml:posList into list of [x, y, z] triples."""
+    if poslist_el is None or not poslist_el.text:
+        return []
+    nums = list(map(float, poslist_el.text.strip().split()))
+    return [[nums[i], nums[i+1], nums[i+2]] for i in range(0, len(nums) - 2, 3)]
+
+
+def _surface_polygons(building, surface_tag: str) -> list[list[list[float]]]:
+    """Extract all 3D polygons for a given surface type (e.g. RoofSurface)."""
+    polygons = []
+    for surf in building.findall(f".//bldg:{surface_tag}", NS):
+        for poslist in surf.findall(".//gml:posList", NS):
+            pts = _poslist_to_pts3d(poslist)
+            if len(pts) >= 3:
+                polygons.append(pts)
+    return polygons
+
+
+def _ground_polygon_2d(building):
+    """Return 2D Shapely Polygon for the GroundSurface (EPSG:25832)."""
     gs = building.find(".//bldg:GroundSurface", NS)
     if gs is None:
         return None
     poslist = gs.find(".//gml:posList", NS)
-    if poslist is None or not poslist.text:
+    pts = _poslist_to_pts3d(poslist)
+    if len(pts) < 3:
         return None
-    nums   = list(map(float, poslist.text.strip().split()))
-    coords = [(nums[i], nums[i + 1]) for i in range(0, len(nums), 3)]
-    if len(coords) < 3:
-        return None
+    coords_2d = [(p[0], p[1]) for p in pts]
     try:
-        poly = Polygon(coords)
+        poly = Polygon(coords_2d)
         return poly if poly.is_valid else poly.buffer(0)
     except Exception:
         return None
 
 
-def parse_file(path: Path) -> list[dict]:
-    tree     = ET.parse(path)
-    root     = tree.getroot()
-    records  = []
+def _text(el):
+    return el.text.strip() if el is not None and el.text else ""
+
+
+def parse_file(path: Path) -> tuple[list[dict], dict]:
+    """Returns (records_for_gdf, surfaces_dict)."""
+    tree    = ET.parse(path)
+    root    = tree.getroot()
+    records = []
+    surfaces = {}
 
     for bldg in root.findall(".//bldg:Building", NS):
         gml_id = bldg.get("{http://www.opengis.net/gml}id", "")
         attrs  = _str_attrs(bldg)
-        poly   = _ground_polygon(bldg)
+        poly   = _ground_polygon_2d(bldg)
         if poly is None:
             continue
 
@@ -77,58 +105,85 @@ def parse_file(path: Path) -> list[dict]:
         if wall_height <= 0:
             continue
 
-        def _text(el): return el.text.strip() if el is not None and el.text else ""
+        # Centroid of ground surface
+        cx_utm = poly.centroid.x
+        cy_utm = poly.centroid.y
+
+        # Extract all LoD2 surfaces
+        ground_pts = _surface_polygons(bldg, "GroundSurface")
+        wall_pts   = _surface_polygons(bldg, "WallSurface")
+        roof_pts   = _surface_polygons(bldg, "RoofSurface")
+
+        if wall_pts or roof_pts:
+            surfaces[gml_id] = {
+                "cx_utm":  cx_utm,
+                "cy_utm":  cy_utm,
+                "h_grund": h_grund,
+                "ground":  ground_pts,
+                "walls":   wall_pts,
+                "roofs":   roof_pts,
+            }
 
         records.append({
-            "gml_id":      gml_id,
-            "height_m":    round(wall_height, 2),
-            "h_dach":      round(h_dach, 3),
-            "h_grund":     round(h_grund, 3),
-            "roof_type":   _text(bldg.find("bldg:roofType", NS)),
-            "function":    _text(bldg.find("bldg:function", NS)),
-            "created":     _text(bldg.find("creationDate", NS)),
-            "geometry":    poly,
+            "gml_id":    gml_id,
+            "height_m":  round(wall_height, 2),
+            "h_dach":    round(h_dach, 3),
+            "h_grund":   round(h_grund, 3),
+            "roof_type": _text(bldg.find("bldg:roofType", NS)),
+            "function":  _text(bldg.find("bldg:function", NS)),
+            "created":   _text(bldg.find("creationDate", NS)),
+            "geometry":  poly,
         })
 
-    return records
+    return records, surfaces
 
 
-def parse_all(citygml_dir: Path = CITYGML_DIR) -> gpd.GeoDataFrame:
+def parse_all(citygml_dir: Path = CITYGML_DIR) -> tuple[gpd.GeoDataFrame, dict]:
     gml_files = sorted(citygml_dir.glob("*.gml"))
     if not gml_files:
         raise FileNotFoundError(f"No .gml files found in {citygml_dir}")
 
-    all_records = []
+    all_records  = []
+    all_surfaces = {}
     for f in gml_files:
-        print(f"  Parsing {f.name} …", end=" ")
-        recs = parse_file(f)
-        print(f"{len(recs)} buildings")
+        print(f"  Parsing {f.name} ...", end=" ")
+        recs, surfs = parse_file(f)
+        print(f"{len(recs)} buildings, {len(surfs)} with LoD2 surfaces")
         all_records.extend(recs)
+        all_surfaces.update(surfs)
 
     gdf = gpd.GeoDataFrame(all_records, crs=CRS_SOURCE)
 
-    # Clip to Georgsvorstadt bounding box (clip in metric CRS to avoid centroid warning)
-    from shapely.geometry import box as shapely_box
-    from pyproj import Transformer
+    # Clip to Georgsvorstadt bbox in metric CRS
     transformer = Transformer.from_crs(CRS_WGS84, CRS_SOURCE, always_xy=True)
     x_min, y_min = transformer.transform(BBOX["min_lon"], BBOX["min_lat"])
     x_max, y_max = transformer.transform(BBOX["max_lon"], BBOX["max_lat"])
-    bbox_poly = shapely_box(x_min, y_min, x_max, y_max)
-    gdf_clip  = gdf[gdf.geometry.centroid.within(bbox_poly)].copy()
-    gdf_clip  = gdf_clip.to_crs(CRS_WGS84).reset_index(drop=True)
+    bbox_poly    = shapely_box(x_min, y_min, x_max, y_max)
+    mask         = gdf.geometry.centroid.within(bbox_poly)
+    gdf_clip     = gdf[mask].to_crs(CRS_WGS84).reset_index(drop=True)
 
-    print(f"  Clipped to Georgsvorstadt BBox: {len(gdf_clip)} buildings")
-    return gdf_clip
+    # Keep only surfaces for clipped buildings
+    kept_ids     = set(gdf_clip["gml_id"])
+    surfs_clip   = {k: v for k, v in all_surfaces.items() if k in kept_ids}
+
+    print(f"  Clipped to BBox: {len(gdf_clip)} buildings, {len(surfs_clip)} with LoD2 surfaces")
+    return gdf_clip, surfs_clip
 
 
 if __name__ == "__main__":
-    print("Parsing CityGML files …")
-    gdf = parse_all()
+    print("Parsing CityGML files ...")
+    gdf, surfaces = parse_all()
 
-    out = DATA_INTERIM / "georgsvorstadt_citygml.geojson"
-    gdf.to_file(out, driver="GeoJSON")
-    print(f"Saved -> {out}")
-    print(f"\nHeight stats (official LoD2):")
+    geojson_out = DATA_INTERIM / "georgsvorstadt_citygml.geojson"
+    gdf.to_file(geojson_out, driver="GeoJSON")
+    print(f"Saved GeoJSON -> {geojson_out}")
+
+    surfaces_out = DATA_INTERIM / "georgsvorstadt_citygml_surfaces.json"
+    with open(surfaces_out, "w", encoding="utf-8") as fh:
+        json.dump(surfaces, fh, ensure_ascii=False)
+    print(f"Saved surfaces -> {surfaces_out}  ({len(surfaces)} buildings)")
+
+    print(f"\nHeight stats:")
     print(f"  min    : {gdf['height_m'].min():.1f} m")
     print(f"  max    : {gdf['height_m'].max():.1f} m")
     print(f"  mean   : {gdf['height_m'].mean():.1f} m")

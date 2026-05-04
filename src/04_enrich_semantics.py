@@ -15,6 +15,8 @@ import geopandas as gpd
 import ifcopenshell
 import ifcopenshell.util.element as ifc_util
 
+CRS_METRIC = "EPSG:25832"  # ETRS89/UTM32N – metres, valid for Bavaria
+
 
 TABULA_MAP = {
     "residential": "MFH_1918_DE",
@@ -52,24 +54,27 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
     oh  = f.by_type("IfcOwnerHistory")[0]
     gdf = gpd.read_file(geojson_path)
 
-    # Build a lookup: building name -> GeoDataFrame row
+    # Reproject to metric CRS for correct area calculation
+    gdf_metric = gdf.to_crs(CRS_METRIC)
+
+    # Build a lookup: building name -> (wgs84 row, metric geometry)
     name_map = {
-        str(row.get("name") or f"Gebaeude_{row.get('osm_id', i)}"): row
+        str(row.get("name") or f"Gebaeude_{row.get('osm_id', i)}"): (row, gdf_metric.iloc[i].geometry)
         for i, (_, row) in enumerate(gdf.iterrows())
     }
 
     enriched = 0
     for bldg in f.by_type("IfcBuilding"):
-        row = name_map.get(bldg.Name)
-        if row is None:
+        entry = name_map.get(bldg.Name)
+        if entry is None:
             continue
+        row, geom_metric = entry
 
-        levels     = int(float(row.get("levels") or 3))
-        year       = str(row.get("start_date") or "unbekannt")
-        occ        = str(row.get("building") or "residential")
-        typology   = TABULA_MAP.get(occ, "MFH_1960_DE")
-        height_m   = float(row.get("height_m", levels * 3.2))
-        gfa        = round(row.geometry.area * 111_320 ** 2 * levels, 1)  # rough m²
+        levels   = int(float(row.get("levels") or 3))
+        year     = str(row.get("start_date") or "unbekannt")
+        occ      = str(row.get("building") or "residential")
+        typology = TABULA_MAP.get(occ, "MFH_1960_DE")
+        gfa      = round(geom_metric.area * levels, 1)  # footprint m² × storeys
 
         _add_pset(f, oh, bldg, "Pset_BuildingCommon", {
             "NumberOfStoreys":    levels,

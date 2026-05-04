@@ -98,11 +98,15 @@ def preprocess(input_path: Path = BUILDINGS_GEOJSON) -> gpd.GeoDataFrame:
 
     # Step 3: height_m priority: CityGML > OSM tag > default
     default = DEFAULT_STOREYS * DEFAULT_STOREY_HEIGHT
+    MIN_HEIGHT = 2.5  # below this → likely garage/outbuilding, use default
     gdf["height_m"] = (
         gdf["height_citygml"]
         .combine_first(gdf["height_osm"])
         .fillna(default)
     )
+    low_mask = gdf["height_m"] < MIN_HEIGHT
+    gdf.loc[low_mask, "height_m"] = default
+    gdf.loc[low_mask, "height_source"] = "default"
     gdf["height_source"] = "default"
     gdf.loc[gdf["height_osm"].notna(),     "height_source"] = "osm_tag"
     gdf.loc[gdf["height_citygml"].notna(), "height_source"] = "citygml"

@@ -1,6 +1,6 @@
 # Digital Twin Augsburg – Georgsvorstadt
 
-Automatisierter GIS→IFC-Workflow für das Quartier Georgsvorstadt (Augsburg, ca. 12 ha, ~380 Gebäude).
+Automatisierter GIS→IFC-Workflow für das Quartier Georgsvorstadt (Augsburg, ca. 12 ha, ~2.140 Gebäude).
 Open-Data-Quellen (BayernAtlas LoD2, ALKIS, OSM) werden vollautomatisch zu einem IFC 4 Digital Twin mit semantischen PropertySets verarbeitet.
 
 **Testquartier:** 48.363° N, 10.898° O · Blockrandbebauung 1880–1930 · Nutzung WA/MI/MK
@@ -9,57 +9,79 @@ Open-Data-Quellen (BayernAtlas LoD2, ALKIS, OSM) werden vollautomatisch zu einem
 
 ## Entwicklungs-Timeline
 
-### 2026-05-02 – Projektstart & Grundstruktur
-- Projektkonzept definiert: 5-Phasen-Workflow GIS → IFC auf Basis von Open Data
-- Verzeichnisstruktur angelegt (`src/`, `data/raw/`, `data/interim/`, `data/output/ifc/`)
-- Alle fünf Pipeline-Skripte erstellt (Phasen 1–5)
-- `configs/settings.py` mit BBox Georgsvorstadt, CRS und Pfaden
-- Repository auf GitHub veröffentlicht
+### 2026-05-04 – BayernAtlas LoD2 & ALKIS integriert
+- **`06_parse_citygml.py` (neu):** Parst LoD2-GML-Kacheln des BayernAtlas, extrahiert amtliche Gebäudehöhen (`NiedrigsteTraufe − HoeheGrund`), Grundrisse und Dachtypen; Clip auf Georgsvorstadt-BBox in metrischem CRS; **2.104 Gebäude mit offiziellen Höhen**
+- **`02_preprocess_gis.py` erweitert:** Dreistufige Höhenpriorität — CityGML (87%) → OSM-Tag (8%) → Default-Fallback (5%); Nearest-Join mit max. 30 m Toleranz in EPSG:25832
+- **`04_enrich_semantics.py` erweitert:** Spatial Join mit ALKIS `Nutzung.shp` → alle 2.140 Gebäude erhalten amtliche Nutzungsklasse (`nutzart`); `Pset_Georgsvorstadt` um `HeightSource`, `GmlID`, `RoofType` erweitert
+- Fix `IndexError` bei fehlendem `IfcOwnerHistory` (ifcopenshell API erstellt keine mehr)
 
 ### 2026-05-04 – Bugfixes, Qualitätsbericht & Notebook
-- Fix doppelter IFC-Dateiname: Phase 3 schreibt jetzt `georgsvorstadt_base.ifc`, Phase 4 `georgsvorstadt_LOD200.ifc` (klar getrennte Pfade in `settings.py`)
-- Fix `GrossFloorArea`-Berechnung in Phase 4: GeoDataFrame wird vor `.area` auf EPSG:25832 (Meter) projiziert — vorher waren es fehlerhafte WGS84-Gradwerte
-- `05_evaluate.py` ausgebaut: Höhenverteilung (min/max/mean/median), Fallback-Zähler, ASCII-Fortschrittsbalken für Pset-Abdeckung
-- `notebooks/01_explore_georgsvorstadt.ipynb` erstellt: Grundrisskarte nach Höhe eingefärbt, Histogramm der Höhenverteilung, Kreisdiagramm der Höhenquelle (Tag / Fallback), Nutzungsklassen-Balkendiagramm, GFA-Statistik
+- Fix doppelter IFC-Dateiname: Phase 3 → `georgsvorstadt_base.ifc`, Phase 4 → `georgsvorstadt_LOD200.ifc`
+- Fix `GrossFloorArea`: GeoDataFrame auf EPSG:25832 projiziert vor `.area`
+- `05_evaluate.py` ausgebaut: Höhenverteilung, Fallback-Zähler, ASCII-Fortschrittsbalken
+- `notebooks/01_explore_georgsvorstadt.ipynb` erstellt und ausgeführt
 
 ### 2026-05-02 – Pipeline debuggt & erstmals durchgelaufen
-- **Phase 1 (`01_fetch_data.py`):** Overpass-API-Request repariert (fehlender `User-Agent`-Header → HTTP 406); Unicode-Ausgabe für Windows-Konsole gefixt
-- **Phase 2 (`02_preprocess_gis.py`):** 2 140 Gebäude aus OSM geladen, bereinigt, Höhen aus `height`- und `building:levels`-Tags abgeleitet
-- **Phase 3 (`03_generate_ifc.py`):** IFC-Hierarchie korrigiert — Geometrie lag auf `IfcBuilding` (von BlenderBIM nicht gerendert); umgestellt auf `IfcBuildingElementProxy` als Geometrieträger; ifcopenshell-API-Signatur auf `products=[...]` angepasst; **2 140 Gebäude erfolgreich als 3D-Körper exportiert**
-- IFC-Modell in BlenderBIM geöffnet und 3D-Geometrie verifiziert
+- **Phase 1:** Overpass-API HTTP 406 gefixt (fehlender `User-Agent`); 2.140 OSM-Gebäude geladen
+- **Phase 3:** IFC-Hierarchie korrigiert — Geometrie von `IfcBuilding` auf `IfcBuildingElementProxy` verschoben; BlenderBIM rendert jetzt korrekt
+- IFC-Modell in BlenderBIM verifiziert
+
+### 2026-05-02 – Projektstart & Grundstruktur
+- 5-Phasen-Workflow konzipiert, Verzeichnisstruktur angelegt, alle Skripte erstellt
+- Repository auf GitHub veröffentlicht
 
 ---
 
-## Workflow (5 Phasen)
+## Workflow (6 Phasen)
 
 ```
-OSM / BayernAtlas / ALKIS
-        │
-        ▼
-[1] 01_fetch_data.py        Gebäudegrundrisse via Overpass API (OSM)
-        │
-        ▼
-[2] 02_preprocess_gis.py    Geometrien bereinigen, Höhen ableiten
-        │
-        ▼
-[3] 03_generate_ifc.py      IFC 4 generieren (LOD 100)
-        │                   IfcProject > IfcSite > IfcBuilding >
-        │                   IfcBuildingStorey > IfcBuildingElementProxy
-        ▼
-[4] 04_enrich_semantics.py  PropertySets ergänzen (LOD 200+)
-        │                   Pset_BuildingCommon, Pset_EnergyConsumption,
-        │                   Pset_Georgsvorstadt (custom)
-        ▼
-[5] 05_evaluate.py          Vollständigkeitsbericht
+BayernAtlas LoD2   ALKIS Nutzung   OpenStreetMap
+      │                  │                │
+      ▼                  │                ▼
+[6] 06_parse_citygml.py  │    [1] 01_fetch_data.py
+      │                  │                │
+      └──────────────────┼────────────────┘
+                         ▼
+               [2] 02_preprocess_gis.py
+                   Höhen: CityGML > OSM-Tag > Default
+                         │
+                         ▼
+               [3] 03_generate_ifc.py
+                   IfcProject > IfcSite > IfcBuilding >
+                   IfcBuildingStorey > IfcBuildingElementProxy
+                         │
+                         ▼
+               [4] 04_enrich_semantics.py
+                   Pset_BuildingCommon  (ALKIS Nutzungsklasse)
+                   Pset_EnergyConsumption
+                   Pset_Georgsvorstadt  (GmlID, HeightSource, RoofType)
+                         │
+                         ▼
+               [5] 05_evaluate.py
+                   Qualitätsbericht
 ```
 
 | Phase | Skript | Output |
 |-------|--------|--------|
 | 1 | `src/01_fetch_data.py` | `data/raw/osm/georgsvorstadt_osm_raw.json` |
 | 2 | `src/02_preprocess_gis.py` | `data/interim/georgsvorstadt_clean.geojson` |
-| 3 | `src/03_generate_ifc.py` | `data/output/ifc/georgsvorstadt_LOD200.ifc` |
-| 4 | `src/04_enrich_semantics.py` | `data/output/ifc/georgsvorstadt_LOD200_LOD200.ifc` |
+| 3 | `src/03_generate_ifc.py` | `data/output/ifc/georgsvorstadt_base.ifc` |
+| 4 | `src/04_enrich_semantics.py` | `data/output/ifc/georgsvorstadt_LOD200.ifc` |
 | 5 | `src/05_evaluate.py` | Bericht auf stdout |
+| 6 | `src/06_parse_citygml.py` | `data/interim/georgsvorstadt_citygml.geojson` |
+
+> Phase 6 vor Phase 2 ausführen, damit die amtlichen Höhen eingemergt werden.
+
+---
+
+## Aktueller Datenstand
+
+| Datenquelle | Status | Gebäude | Anteil |
+|-------------|--------|---------|--------|
+| BayernAtlas LoD2 (amtlich) | integriert | 1.871 gematcht | **87%** |
+| OSM-Tags (`height` / `levels`) | integriert | 171 | 8% |
+| Default-Fallback (9,6 m) | – | 98 | 5% |
+| ALKIS Nutzungsklasse | integriert | 2.140 / 2.140 | **100%** |
 
 ---
 
@@ -77,19 +99,21 @@ pip install -r requirements.txt
 ## Ausführung
 
 ```bash
-# Vollständigen Python-Pfad nutzen (Windows) oder in venv/conda aktivieren:
+python src/06_parse_citygml.py     # BayernAtlas LoD2 parsen (einmalig)
 python src/01_fetch_data.py        # OSM-Daten holen
-python src/02_preprocess_gis.py    # GIS bereinigen
+python src/02_preprocess_gis.py    # GIS bereinigen + Höhen mergen
 python src/03_generate_ifc.py      # IFC generieren
-python src/04_enrich_semantics.py  # Semantik ergänzen
-python src/05_evaluate.py          # Bericht
+python src/04_enrich_semantics.py  # Semantik ergänzen (ALKIS + PropertySets)
+python src/05_evaluate.py          # Qualitätsbericht
 ```
 
 ---
 
 ## IFC-Modell anschauen
 
-- **BlenderBIM** (empfohlen): `File → Open IFC Project` → `data/output/ifc/georgsvorstadt_LOD200.ifc`
+Die aktuelle IFC-Datei ist `data/output/ifc/georgsvorstadt_LOD200.ifc`.
+
+- **BlenderBIM** (empfohlen): `File → Open IFC Project` → `georgsvorstadt_LOD200.ifc`
 - **FZKViewer** (KIT): IFC-Datei reinziehen, keine Konfiguration nötig
 - **Online**: Autodesk Viewer (viewer.autodesk.com)
 
@@ -97,17 +121,15 @@ python src/05_evaluate.py          # Bericht
 
 ## Datenquellen
 
-| Quelle | Inhalt | Format | Bezug |
-|--------|--------|--------|-------|
-| OpenStreetMap | Gebäudegrundrisse, Höhentags | GeoJSON (Overpass API) | automatisch via `01_fetch_data.py` |
-| BayernAtlas (LDBV) | LoD1/LoD2 Gebäudemodelle | CityGML | https://www.ldbv.bayern.de/produkte/3dgeo/3d_gebaeude.html |
-| ALKIS Bayern | Flurstücke, Gebäudegrundrisse | NAS/GML | GDI-Bayern WFS-Portal |
-| Bayerischer Energieatlas | Energiebedarf je Quartier | CSV/WMS | https://www.energieatlas.bayern.de |
-| TABULA | Gebäudetypologien, U-Werte | CSV | https://webtool.building-typology.eu |
+| Quelle | Inhalt | Format | Bezug | Status |
+|--------|--------|--------|-------|--------|
+| OpenStreetMap | Gebäudegrundrisse, Höhentags | GeoJSON (Overpass API) | automatisch via `01_fetch_data.py` | ✓ aktiv |
+| BayernAtlas (LDBV) | LoD2 Gebäudemodelle, amtl. Höhen | CityGML | https://www.ldbv.bayern.de/produkte/3dgeo/3d_gebaeude.html | ✓ integriert |
+| ALKIS Bayern | Nutzungsklassifikation | SHP | GDI-Bayern Portal | ✓ integriert |
+| Bayerischer Energieatlas | Energiebedarf je Quartier | CSV/WMS | https://www.energieatlas.bayern.de | geplant |
+| TABULA | Gebäudetypologien, U-Werte | CSV | https://webtool.building-typology.eu | Mapping vorhanden |
 
-Manuell heruntergeladene Daten gehören nach `data/raw/citygml/` (BayernAtlas) bzw. `data/raw/alkis/` (ALKIS).
-
-> **Aktueller Stand:** Der Workflow läuft vollständig auf OSM-Daten (automatisch via Phase 1). BayernAtlas LoD2 und ALKIS sind als Datenquellen vorbereitet und dokumentiert, aber noch nicht integriert — die Verzeichnisse `data/raw/citygml/` und `data/raw/alkis/` sind leer. CityGML-Parser und ALKIS-WFS-Integration sind als nächste Ausbaustufe geplant.
+Rohdaten gehören nach `data/raw/citygml/` (BayernAtlas) bzw. `data/raw/alkis/` (ALKIS) — nicht versioniert.
 
 ---
 
@@ -119,10 +141,10 @@ Manuell heruntergeladene Daten gehören nach `data/raw/citygml/` (BayernAtlas) b
 | IfcSite | RefLatitude, RefLongitude | OSM | 100 |
 | IfcBuilding | Name, ObjectPlacement | OSM | 100 |
 | IfcBuildingStorey | Elevation, Name | LoD2 / OSM | 100 |
-| IfcBuildingElementProxy | Geometry (ExtrudedAreaSolid) | OSM / LoD2 | 100 |
-| Pset_BuildingCommon | NumberOfStoreys, YearOfConstruction, OccupancyType | ALKIS / OSM | 200+ |
-| Pset_EnergyConsumption | EnergyConsumptionHeating, CO2Intensity | Energieatlas Bayern | Semantik |
-| Pset_Georgsvorstadt | BuildingTypology, SealingRatio, CadastralID | ATKIS / ALKIS / TABULA | Semantik |
+| IfcBuildingElementProxy | Geometry (ExtrudedAreaSolid) | CityGML / OSM | 100 |
+| Pset_BuildingCommon | NumberOfStoreys, YearOfConstruction, OccupancyType, GrossFloorArea | ALKIS / OSM | 200+ |
+| Pset_EnergyConsumption | EnergyConsumptionHeating, CO2Intensity | Energieatlas Bayern (geplant) | Semantik |
+| Pset_Georgsvorstadt | BuildingTypology, SealingRatio, CadastralID, GmlID, HeightSource, RoofType | ALKIS / CityGML / TABULA | Semantik |
 
 ---
 
@@ -131,21 +153,23 @@ Manuell heruntergeladene Daten gehören nach `data/raw/citygml/` (BayernAtlas) b
 ```
 Digital_Twin_Augsburg/
 ├── configs/
-│   └── settings.py           # BBox, CRS, alle Pfade
+│   └── settings.py              # BBox, CRS, alle Pfade
 ├── src/
-│   ├── 01_fetch_data.py
-│   ├── 02_preprocess_gis.py
-│   ├── 03_generate_ifc.py
-│   ├── 04_enrich_semantics.py
-│   └── 05_evaluate.py
+│   ├── 01_fetch_data.py         # OSM via Overpass API
+│   ├── 02_preprocess_gis.py     # Bereinigung + Höhen-Merge
+│   ├── 03_generate_ifc.py       # IFC 4 Geometrie (LOD 100)
+│   ├── 04_enrich_semantics.py   # PropertySets + ALKIS-Join
+│   ├── 05_evaluate.py           # Qualitätsbericht
+│   └── 06_parse_citygml.py      # BayernAtlas LoD2 Parser
 ├── data/
-│   ├── raw/                  # Rohdaten (nicht versioniert)
-│   │   ├── citygml/          # BayernAtlas LoD2 (manuell)
-│   │   ├── alkis/            # ALKIS WFS-Export (manuell)
-│   │   └── osm/              # automatisch via Phase 1
-│   ├── interim/              # bereinigtes GeoJSON
-│   └── output/ifc/           # fertige .ifc-Dateien
-├── notebooks/                # explorative Auswertungen
+│   ├── raw/                     # Rohdaten (nicht versioniert)
+│   │   ├── citygml/             # BayernAtlas LoD2 .gml Kacheln
+│   │   ├── alkis/               # ALKIS Nutzung.shp
+│   │   └── osm/                 # automatisch via Phase 1
+│   ├── interim/                 # bereinigtes GeoJSON, CityGML-GeoJSON
+│   └── output/ifc/              # georgsvorstadt_base.ifc, georgsvorstadt_LOD200.ifc
+├── notebooks/
+│   └── 01_explore_georgsvorstadt.ipynb
 ├── requirements.txt
 └── README.md
 ```
@@ -154,6 +178,6 @@ Digital_Twin_Augsburg/
 
 ## Technologien
 
-- **Python** · GeoPandas · IfcOpenShell · Shapely
-- **QGIS** (manuelle GIS-Schritte, CityGML-Import)
-- **BlenderBIM** (Qualitätskontrolle, IFC-Visualisierung)
+- **Python** · GeoPandas · IfcOpenShell · Shapely · PyProj
+- **BlenderBIM** (IFC-Visualisierung & Qualitätskontrolle)
+- **QGIS** (optional, für manuelle GIS-Schritte)

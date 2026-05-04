@@ -9,7 +9,7 @@ Adds IfcPropertySets to each IfcBuilding in an existing IFC file:
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from configs.settings import IFC_OUTPUT, DATA_INTERIM
+from configs.settings import IFC_OUTPUT, IFC_LOD200, DATA_INTERIM
 
 import geopandas as gpd
 import ifcopenshell
@@ -93,9 +93,9 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
         })
         enriched += 1
 
-    out = ifc_path.parent / ifc_path.name.replace(".ifc", "_LOD200.ifc")
-    f.write(str(out))
-    print(f"Enriched {enriched} buildings -> {out}")
+    IFC_LOD200.parent.mkdir(parents=True, exist_ok=True)
+    f.write(str(IFC_LOD200))
+    print(f"Enriched {enriched} buildings -> {IFC_LOD200}")
 
 
 if __name__ == "__main__":

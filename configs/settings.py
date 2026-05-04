@@ -24,7 +24,9 @@ ALKIS_DIR    = DATA_RAW / "alkis"
 OSM_DIR      = DATA_RAW / "osm"
 
 BUILDINGS_GEOJSON = DATA_INTERIM / "georgsvorstadt_gebaeude.geojson"
-IFC_OUTPUT        = DATA_OUTPUT / "ifc" / "georgsvorstadt_LOD200.ifc"
+IFC_BASE          = DATA_OUTPUT / "ifc" / "georgsvorstadt_base.ifc"     # Phase 3 output
+IFC_OUTPUT        = IFC_BASE                                              # alias used by Phase 3
+IFC_LOD200        = DATA_OUTPUT / "ifc" / "georgsvorstadt_LOD200.ifc"   # Phase 4 output
 
 # IFC defaults
 DEFAULT_STOREY_HEIGHT = 3.2   # metres per floor when no height tag present

@@ -16,6 +16,12 @@ Open-Data-Quellen (BayernAtlas LoD2, ALKIS, OSM) werden vollautomatisch zu einem
 - `configs/settings.py` mit BBox Georgsvorstadt, CRS und Pfaden
 - Repository auf GitHub veröffentlicht
 
+### 2026-05-04 – Bugfixes, Qualitätsbericht & Notebook
+- Fix doppelter IFC-Dateiname: Phase 3 schreibt jetzt `georgsvorstadt_base.ifc`, Phase 4 `georgsvorstadt_LOD200.ifc` (klar getrennte Pfade in `settings.py`)
+- Fix `GrossFloorArea`-Berechnung in Phase 4: GeoDataFrame wird vor `.area` auf EPSG:25832 (Meter) projiziert — vorher waren es fehlerhafte WGS84-Gradwerte
+- `05_evaluate.py` ausgebaut: Höhenverteilung (min/max/mean/median), Fallback-Zähler, ASCII-Fortschrittsbalken für Pset-Abdeckung
+- `notebooks/01_explore_georgsvorstadt.ipynb` erstellt: Grundrisskarte nach Höhe eingefärbt, Histogramm der Höhenverteilung, Kreisdiagramm der Höhenquelle (Tag / Fallback), Nutzungsklassen-Balkendiagramm, GFA-Statistik
+
 ### 2026-05-02 – Pipeline debuggt & erstmals durchgelaufen
 - **Phase 1 (`01_fetch_data.py`):** Overpass-API-Request repariert (fehlender `User-Agent`-Header → HTTP 406); Unicode-Ausgabe für Windows-Konsole gefixt
 - **Phase 2 (`02_preprocess_gis.py`):** 2 140 Gebäude aus OSM geladen, bereinigt, Höhen aus `height`- und `building:levels`-Tags abgeleitet
@@ -100,6 +106,8 @@ python src/05_evaluate.py          # Bericht
 | TABULA | Gebäudetypologien, U-Werte | CSV | https://webtool.building-typology.eu |
 
 Manuell heruntergeladene Daten gehören nach `data/raw/citygml/` (BayernAtlas) bzw. `data/raw/alkis/` (ALKIS).
+
+> **Aktueller Stand:** Der Workflow läuft vollständig auf OSM-Daten (automatisch via Phase 1). BayernAtlas LoD2 und ALKIS sind als Datenquellen vorbereitet und dokumentiert, aber noch nicht integriert — die Verzeichnisse `data/raw/citygml/` und `data/raw/alkis/` sind leer. CityGML-Parser und ALKIS-WFS-Integration sind als nächste Ausbaustufe geplant.
 
 ---
 

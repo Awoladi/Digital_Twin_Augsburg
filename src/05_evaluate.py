@@ -1,7 +1,7 @@
 """
 Phase 5 – Bewertung & Dokumentation
-Checks completeness of the enriched IFC model and prints a quality report
-including height distribution and attribute fill rates.
+Prüft die Vollständigkeit des angereicherten IFC-Modells und gibt einen
+Qualitätsbericht mit Höhenverteilung und Attribut-Füllraten aus.
 """
 
 import sys, time, statistics
@@ -17,7 +17,7 @@ REQUIRED_PSETS = {
     "Pset_Georgsvorstadt": ["BuildingTypology", "CadastralID"],
 }
 
-DEFAULT_HEIGHT = DEFAULT_STOREYS * DEFAULT_STOREY_HEIGHT  # 9.6 m
+DEFAULT_HEIGHT = DEFAULT_STOREYS * DEFAULT_STOREY_HEIGHT  # 9,6 m
 
 
 def _bar(ratio: float, width: int = 20) -> str:
@@ -32,12 +32,12 @@ def evaluate(ifc_path: Path) -> None:
     total     = len(buildings)
 
     print(f"\n{'='*55}")
-    print(f"  IFC Quality Report: {ifc_path.name}")
+    print(f"  IFC-Qualitaetsbericht: {ifc_path.name}")
     print(f"{'='*55}")
-    print(f"  IfcBuilding entities : {total}")
+    print(f"  IfcBuilding-Entitaeten : {total}")
 
     # ------------------------------------------------------------------
-    # Height distribution via IfcBuildingElementProxy extents
+    # Höhenverteilung über IfcBuildingElementProxy-Ausdehnungen
     # ------------------------------------------------------------------
     heights = []
     for proxy in f.by_type("IfcBuildingElementProxy"):
@@ -50,16 +50,16 @@ def evaluate(ifc_path: Path) -> None:
 
     if heights:
         default_count = sum(1 for h in heights if abs(h - DEFAULT_HEIGHT) < 0.01)
-        print(f"\n  Height distribution ({len(heights)} proxies):")
-        print(f"    min     : {min(heights):.1f} m")
-        print(f"    max     : {max(heights):.1f} m")
-        print(f"    mean    : {statistics.mean(heights):.1f} m")
-        print(f"    median  : {statistics.median(heights):.1f} m")
-        print(f"    fallback: {default_count} ({default_count/len(heights)*100:.0f}%) "
-              f"used default {DEFAULT_HEIGHT} m  <- no OSM height tag")
+        print(f"\n  Höhenverteilung ({len(heights)} Proxies):")
+        print(f"    min      : {min(heights):.1f} m")
+        print(f"    max      : {max(heights):.1f} m")
+        print(f"    Mittel   : {statistics.mean(heights):.1f} m")
+        print(f"    Median   : {statistics.median(heights):.1f} m")
+        print(f"    Fallback : {default_count} ({default_count/len(heights)*100:.0f}%) "
+              f"Standard {DEFAULT_HEIGHT} m  <- kein OSM-Höhen-Tag")
 
     # ------------------------------------------------------------------
-    # PropertySet coverage
+    # PropertySet-Abdeckung
     # ------------------------------------------------------------------
     pset_hits = {pset: 0 for pset in REQUIRED_PSETS}
     attr_hits = {}
@@ -75,12 +75,12 @@ def evaluate(ifc_path: Path) -> None:
                     if val and str(val) not in ("n/a", "unbekannt", ""):
                         attr_hits[key] = attr_hits.get(key, 0) + 1
 
-    print(f"\n  PropertySet coverage:")
+    print(f"\n  PropertySet-Abdeckung:")
     for pset_name, count in pset_hits.items():
         ratio = count / total if total else 0
         print(f"    {pset_name:<30} {_bar(ratio)} {count}/{total} ({ratio*100:.0f}%)")
 
-    print(f"\n  Attribute fill rate (excl. n/a / unbekannt):")
+    print(f"\n  Attribut-Füllrate (ohne n/a / unbekannt):")
     for pset_name, attrs in REQUIRED_PSETS.items():
         for attr in attrs:
             key   = f"{pset_name}.{attr}"
@@ -89,22 +89,22 @@ def evaluate(ifc_path: Path) -> None:
             print(f"    {key:<48} {count:>4}/{total} ({ratio*100:.0f}%)")
 
     # ------------------------------------------------------------------
-    # Known limitations
+    # Bekannte Lücken
     # ------------------------------------------------------------------
-    print(f"\n  Known gaps:")
-    print(f"    - Roof geometry (LoD2 CityGML not yet integrated)")
-    print(f"    - Windows, doors, interior spaces (requires LoD3+)")
-    print(f"    - YearOfConstruction: only OSM start_date tag used")
-    print(f"    - EnergyConsumption: placeholder, needs Energieatlas Bayern")
+    print(f"\n  Bekannte Luecken:")
+    print(f"    - Dachgeometrie (LoD2 CityGML nicht integriert)")
+    print(f"    - Fenster, Tueren, Innenraeume (erfordert LoD3+)")
+    print(f"    - YearOfConstruction: nur OSM-start_date-Tag genutzt")
+    print(f"    - EnergyConsumption: Platzhalter, benoetigt Energieatlas Bayern")
 
     elapsed = time.time() - t0
-    print(f"\n  Processed in {elapsed:.2f}s")
+    print(f"\n  Verarbeitet in {elapsed:.2f}s")
     print(f"{'='*55}\n")
 
 
 if __name__ == "__main__":
     candidates = sorted((DATA_OUTPUT / "ifc").glob("*_LOD200*.ifc"))
     if not candidates:
-        print("No LOD200 IFC file found. Run phases 1-4 first.")
+        print("Keine LOD200-IFC-Datei gefunden. Phasen 1-4 zuerst ausführen.")
         sys.exit(1)
     evaluate(candidates[-1])

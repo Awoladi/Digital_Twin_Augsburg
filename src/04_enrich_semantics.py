@@ -1,9 +1,9 @@
 """
 Phase 4 – Semantische Erweiterung (LOD 200+)
-Adds IfcPropertySets to each IfcBuilding in an existing IFC file:
+Fügt jedem IfcBuilding in einer bestehenden IFC-Datei PropertySets hinzu:
   - Pset_BuildingCommon  (NumberOfStoreys, YearOfConstruction, OccupancyType)
-  - Pset_EnergyConsumption (placeholder – fill from Energieatlas Bayern)
-  - Pset_Georgsvorstadt  (custom: SealingRatio, BuildingTypology, CadastralID)
+  - Pset_EnergyConsumption (Platzhalter – aus Energieatlas Bayern befüllen)
+  - Pset_Georgsvorstadt  (individuell: SealingRatio, BuildingTypology, CadastralID)
 """
 
 import sys
@@ -16,7 +16,7 @@ import pandas as pd
 import ifcopenshell
 import ifcopenshell.util.element as ifc_util
 
-CRS_METRIC = CRS_SOURCE  # EPSG:25832 – ETRS89/UTM32N, metres, valid for Bavaria
+CRS_METRIC = CRS_SOURCE  # EPSG:25832 – ETRS89/UTM32N, Meter, gültig für Bayern
 ALKIS_SHP  = DATA_INTERIM.parent / "raw" / "alkis" / "Nutzung.shp"
 
 
@@ -52,11 +52,11 @@ def _add_pset(f: ifcopenshell.file, oh, building, name: str, props: dict):
 
 
 def _load_alkis_lookup(gdf_metric: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Spatial join: each building centroid → ALKIS Nutzungsklasse."""
+    """Spatial-Join: jedem Gebäudeschwerpunkt die ALKIS-Nutzungsklasse zuweisen."""
     if not ALKIS_SHP.exists():
         return None
     alkis = gpd.read_file(ALKIS_SHP)[["nutzart", "bez", "geometry"]]
-    # alkis is already EPSG:25832
+    # ALKIS liegt bereits in EPSG:25832 vor
     centroids = gdf_metric.copy()
     centroids.geometry = centroids.geometry.centroid
     joined = gpd.sjoin(centroids[["geometry"]], alkis, how="left", predicate="within")
@@ -69,15 +69,15 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
     oh = oh_list[0] if oh_list else None
     gdf = gpd.read_file(geojson_path)
 
-    # Reproject to metric CRS for area and spatial join
+    # In metrisches CRS reprojizieren für Flächenberechnung und Spatial-Join
     gdf_metric = gdf.to_crs(CRS_METRIC)
 
-    # ALKIS land use per building (optional)
+    # ALKIS-Nutzung je Gebäude (optional)
     alkis_join = _load_alkis_lookup(gdf_metric)
     if alkis_join is not None:
-        print(f"  ALKIS spatial join: {alkis_join['nutzart'].notna().sum()}/{len(gdf)} matched")
+        print(f"  ALKIS-Spatial-Join: {alkis_join['nutzart'].notna().sum()}/{len(gdf)} gematcht")
 
-    # Build lookup: building name -> (wgs84 row, metric geometry, alkis row)
+    # Lookup aufbauen: Gebäudename -> (WGS84-Zeile, metrische Geometrie, ALKIS-Zeile)
     name_map = {}
     for i, (_, row) in enumerate(gdf.iterrows()):
         key = str(row.get("name") or f"Gebaeude_{row.get('osm_id', i)}")
@@ -95,7 +95,7 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
         year     = str(row.get("start_date") or "unbekannt")
         gfa      = round(geom_metric.area * levels, 1)
 
-        # OccupancyType: ALKIS beats OSM building tag
+        # OccupancyType: ALKIS hat Vorrang vor OSM-building-Tag
         if alkis_row is not None and pd.notna(alkis_row.get("nutzart")):
             occ = str(alkis_row["nutzart"])
         else:
@@ -114,7 +114,7 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
             "GrossFloorArea":     gfa,
         })
         _add_pset(f, oh, bldg, "Pset_EnergyConsumption", {
-            "EnergyConsumptionHeating": "n/a",  # fill from Energieatlas Bayern
+            "EnergyConsumptionHeating": "n/a",  # aus Energieatlas Bayern befüllen
             "CO2Intensity":             "n/a",
         })
         _add_pset(f, oh, bldg, "Pset_Georgsvorstadt", {
@@ -129,12 +129,12 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
 
     IFC_LOD200.parent.mkdir(parents=True, exist_ok=True)
     f.write(str(IFC_LOD200))
-    print(f"Enriched {enriched} buildings -> {IFC_LOD200}")
+    print(f"{enriched} Gebäude semantisch erweitert -> {IFC_LOD200}")
 
 
 if __name__ == "__main__":
     clean = DATA_INTERIM / "georgsvorstadt_clean.geojson"
     if not IFC_OUTPUT.exists():
-        print("Run 03_generate_ifc.py first.")
+        print("Zuerst 03_generate_ifc.py ausführen.")
         sys.exit(1)
     enrich(IFC_OUTPUT, clean)

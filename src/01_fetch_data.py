@@ -1,7 +1,7 @@
 """
 Phase 1 – Datenbeschaffung
-Downloads OSM building footprints for Georgsvorstadt via Overpass API.
-BayernAtlas (LoD2) and ALKIS must be downloaded manually – see README.
+Lädt OSM-Gebäudegrundrisse für die Georgsvorstadt über die Overpass API.
+BayernAtlas (LoD2) und ALKIS müssen manuell heruntergeladen werden – siehe README.
 """
 
 import json
@@ -66,7 +66,7 @@ def osm_to_geojson(osm: dict) -> dict:
 
 
 if __name__ == "__main__":
-    print("Fetching OSM buildings for Georgsvorstadt …")
+    print("Lade OSM-Gebäude für die Georgsvorstadt …")
     osm  = fetch_osm_buildings()
     gj   = osm_to_geojson(osm)
 
@@ -77,4 +77,4 @@ if __name__ == "__main__":
     BUILDINGS_GEOJSON.parent.mkdir(parents=True, exist_ok=True)
     BUILDINGS_GEOJSON.write_text(json.dumps(gj, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"  {len(gj['features'])} buildings saved -> {BUILDINGS_GEOJSON}")
+    print(f"  {len(gj['features'])} Gebäude gespeichert -> {BUILDINGS_GEOJSON}")

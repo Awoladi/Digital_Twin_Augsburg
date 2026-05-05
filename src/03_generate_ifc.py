@@ -1,10 +1,10 @@
 """
 Phase 3 – IFC-Generierung (LOD 100 / LOD 200)
 
-For buildings with CityGML LoD2 surfaces: IfcFacetedBrep (actual roof shapes).
-For OSM-only buildings: IfcExtrudedAreaSolid (flat-top box, LOD 100 fallback).
+Gebäude mit CityGML-LoD2-Flächen: IfcFacetedBrep (echte Dachgeometrie).
+Reine OSM-Gebäude: IfcExtrudedAreaSolid (flache Box, LOD-100-Fallback).
 
-Hierarchy:
+Hierarchie:
   IfcProject > IfcSite > IfcBuilding > IfcBuildingStorey > IfcBuildingElementProxy
 """
 
@@ -27,7 +27,7 @@ SURFACES_JSON = DATA_INTERIM / "georgsvorstadt_citygml_surfaces.json"
 # ---------------------------------------------------------------------------
 
 def _make_to_local(ref_lon, ref_lat):
-    """Returns a function that converts WGS84 lon/lat to site-local metres."""
+    """Gibt eine Funktion zurück, die WGS84-Lon/Lat in standortlokale Meter umrechnet."""
     def to_local(lon, lat):
         x = (lon - ref_lon) * math.cos(math.radians(ref_lat)) * 111_320
         y = (lat - ref_lat) * 111_320
@@ -36,7 +36,7 @@ def _make_to_local(ref_lon, ref_lat):
 
 
 def _utm_centroid_to_local(cx_utm, cy_utm, ref_lon, ref_lat):
-    """Convert UTM32N centroid to site-local IFC metres."""
+    """Konvertiert UTM32N-Schwerpunkt in standortlokale IFC-Meter."""
     t = Transformer.from_crs(CRS_SOURCE, CRS_WGS84, always_xy=True)
     lon, lat = t.transform(cx_utm, cy_utm)
     to_local = _make_to_local(ref_lon, ref_lat)
@@ -66,8 +66,8 @@ def _dms(decimal):
 # ---------------------------------------------------------------------------
 
 def _extruded_solid(f, body_ctx, coords_wgs84, height):
-    """LOD 100 fallback: extruded box from WGS84 footprint ring."""
-    # Footprint already in local coords (relative to building centroid)
+    """LOD-100-Fallback: extrudierte Box aus WGS84-Grundrissring."""
+    # Grundriss bereits in lokalen Koordinaten (relativ zum Gebäudeschwerpunkt)
     pts_2d = [f.createIfcCartesianPoint([float(x), float(y)]) for x, y in coords_wgs84]
     pts_2d.append(pts_2d[0])
     polyline = f.createIfcPolyline(pts_2d)
@@ -85,7 +85,7 @@ def _extruded_solid(f, body_ctx, coords_wgs84, height):
 
 
 def _faceted_brep(f, body_ctx, surf_data):
-    """LoD2: IfcFacetedBrep from CityGML Ground + Wall + Roof surfaces."""
+    """LoD2: IfcFacetedBrep aus CityGML-Boden-, Wand- und Dachflächen."""
     cx   = surf_data["cx_utm"]
     cy   = surf_data["cy_utm"]
     h0   = surf_data["h_grund"]
@@ -125,14 +125,14 @@ def _faceted_brep(f, body_ctx, surf_data):
 def build_ifc(geojson_path: Path, output_path: Path) -> None:
     gdf = gpd.read_file(geojson_path)
 
-    # Load CityGML surfaces if available
+    # CityGML-Flächen laden, falls vorhanden
     surfaces_map = {}
     if SURFACES_JSON.exists():
         with open(SURFACES_JSON, encoding="utf-8") as fh:
             surfaces_map = json.load(fh)
-        print(f"  Loaded {len(surfaces_map)} LoD2 surface sets")
+        print(f"  {len(surfaces_map)} LoD2-Flächensätze geladen")
     else:
-        print("  No surfaces JSON found – using LOD 100 box for all buildings")
+        print("  Kein Flächen-JSON gefunden – LOD-100-Box für alle Gebäude")
 
     model = ifcopenshell.file(schema="IFC4")
     project = ifc_api.run("root.create_entity", model, ifc_class="IfcProject", name=PROJECT_NAME)
@@ -169,7 +169,7 @@ def build_ifc(geojson_path: Path, output_path: Path) -> None:
 
             surf_data = surfaces_map.get(gml_id)
 
-            # Building centroid in IFC site coords
+            # Gebäudeschwerpunkt in IFC-Standortkoordinaten
             if surf_data:
                 bx, by = _utm_centroid_to_local(
                     surf_data["cx_utm"], surf_data["cy_utm"], ref_lon, ref_lat
@@ -179,7 +179,7 @@ def build_ifc(geojson_path: Path, output_path: Path) -> None:
                 bx = sum(p[0] for p in local_xy) / len(local_xy)
                 by = sum(p[1] for p in local_xy) / len(local_xy)
 
-            # Spatial hierarchy
+            # Räumliche Hierarchie
             building = ifc_api.run("root.create_entity", model, ifc_class="IfcBuilding", name=name)
             ifc_api.run("aggregate.assign_object", model, relating_object=site, products=[building])
             building.ObjectPlacement = _placement(model, bx, by, 0.0, site.ObjectPlacement)
@@ -192,7 +192,7 @@ def build_ifc(geojson_path: Path, output_path: Path) -> None:
             ifc_api.run("spatial.assign_container", model, relating_structure=storey, products=[proxy])
             proxy.ObjectPlacement = _placement(model, 0.0, 0.0, 0.0, storey.ObjectPlacement)
 
-            # Geometry
+            # Geometrie
             if surf_data:
                 repr_ = _faceted_brep(model, body_ctx, surf_data)
                 if repr_:
@@ -200,7 +200,7 @@ def build_ifc(geojson_path: Path, output_path: Path) -> None:
                     built_brep += 1
                     continue
 
-            # Fallback: extruded box
+            # Fallback: extrudierte Box
             local_xy = [to_local(lon, lat) for lon, lat in coords[:-1]]
             bx2 = sum(p[0] for p in local_xy) / len(local_xy)
             by2 = sum(p[1] for p in local_xy) / len(local_xy)
@@ -213,15 +213,15 @@ def build_ifc(geojson_path: Path, output_path: Path) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     model.write(str(output_path))
-    print(f"IFC written -> {output_path}")
+    print(f"IFC geschrieben -> {output_path}")
     print(f"  LoD2 FacetedBrep : {built_brep}")
-    print(f"  LOD100 box       : {built_box}")
-    print(f"  Skipped          : {skipped}")
+    print(f"  LOD100 Box       : {built_box}")
+    print(f"  Übersprungen     : {skipped}")
 
 
 if __name__ == "__main__":
     clean = DATA_INTERIM / "georgsvorstadt_clean.geojson"
     if not clean.exists():
-        print("Run 02_preprocess_gis.py first.")
+        print("Zuerst 02_preprocess_gis.py ausführen.")
         sys.exit(1)
     build_ifc(clean, IFC_OUTPUT)

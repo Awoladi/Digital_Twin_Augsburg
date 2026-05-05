@@ -1,14 +1,14 @@
 """
 Phase 6 – CityGML-Parser (BayernAtlas LoD2)
-Reads all .gml files in data/raw/citygml/ and writes:
-  - data/interim/georgsvorstadt_citygml.geojson   (footprints + heights)
-  - data/interim/georgsvorstadt_citygml_surfaces.json  (LoD2 3D surfaces per gml_id)
+Liest alle .gml-Dateien in data/raw/citygml/ und schreibt:
+  - data/interim/georgsvorstadt_citygml.geojson   (Grundrisse + Höhen)
+  - data/interim/georgsvorstadt_citygml_surfaces.json  (LoD2-3D-Flächen je gml_id)
 
-Height logic:
-  wall_height = NiedrigsteTraufeDesGebaeudes - HoeheGrund  (eave, for box fallback)
-  fallback    = HoeheDach - HoeheGrund
+Höhenlogik:
+  Wandhöhe = NiedrigsteTraufeDesGebaeudes - HoeheGrund  (Traufe, für Box-Fallback)
+  Fallback  = HoeheDach - HoeheGrund
 
-Surfaces JSON structure per gml_id:
+Surfaces-JSON-Struktur je gml_id:
   { "cx_utm": float, "cy_utm": float, "h_grund": float,
     "ground": [[x,y,z],...], "walls": [[[x,y,z],...]], "roofs": [[[x,y,z],...]] }
 """
@@ -29,6 +29,21 @@ NS = {
     "gen":  "http://www.opengis.net/citygml/generics/1.0",
 }
 
+ROOF_CODES = {
+    "1000": "Flachdach",
+    "2100": "Satteldach",
+    "2200": "Walmdach",
+    "2300": "Krüppelwalmdach",
+    "2400": "Mansarddach",
+    "3100": "Pultdach",
+    "3200": "Versetztes Pultdach",
+    "4000": "Zeltdach",
+    "5000": "Kegeldach",
+    "5100": "Kugelförmig",
+    "6000": "Tonnendach",
+    "9999": "Sonstiges",
+}
+
 
 def _str_attrs(building) -> dict:
     attrs = {}
@@ -41,7 +56,7 @@ def _str_attrs(building) -> dict:
 
 
 def _poslist_to_pts3d(poslist_el) -> list[list[float]]:
-    """Parse gml:posList into list of [x, y, z] triples."""
+    """Parst gml:posList in eine Liste von [x, y, z]-Tripeln."""
     if poslist_el is None or not poslist_el.text:
         return []
     nums = list(map(float, poslist_el.text.strip().split()))
@@ -49,7 +64,7 @@ def _poslist_to_pts3d(poslist_el) -> list[list[float]]:
 
 
 def _surface_polygons(building, surface_tag: str) -> list[list[list[float]]]:
-    """Extract all 3D polygons for a given surface type (e.g. RoofSurface)."""
+    """Extrahiert alle 3D-Polygone für einen Flächentyp (z. B. RoofSurface)."""
     polygons = []
     for surf in building.findall(f".//bldg:{surface_tag}", NS):
         for poslist in surf.findall(".//gml:posList", NS):
@@ -60,7 +75,7 @@ def _surface_polygons(building, surface_tag: str) -> list[list[list[float]]]:
 
 
 def _ground_polygon_2d(building):
-    """Return 2D Shapely Polygon for the GroundSurface (EPSG:25832)."""
+    """Gibt das 2D-Shapely-Polygon der GroundSurface zurück (EPSG:25832)."""
     gs = building.find(".//bldg:GroundSurface", NS)
     if gs is None:
         return None
@@ -81,7 +96,7 @@ def _text(el):
 
 
 def parse_file(path: Path) -> tuple[list[dict], dict]:
-    """Returns (records_for_gdf, surfaces_dict)."""
+    """Gibt (records_for_gdf, surfaces_dict) zurück."""
     tree    = ET.parse(path)
     root    = tree.getroot()
     records = []
@@ -105,11 +120,11 @@ def parse_file(path: Path) -> tuple[list[dict], dict]:
         if wall_height <= 0:
             continue
 
-        # Centroid of ground surface
+        # Schwerpunkt der Grundfläche
         cx_utm = poly.centroid.x
         cy_utm = poly.centroid.y
 
-        # Extract all LoD2 surfaces
+        # Alle LoD2-Flächen extrahieren
         ground_pts = _surface_polygons(bldg, "GroundSurface")
         wall_pts   = _surface_polygons(bldg, "WallSurface")
         roof_pts   = _surface_polygons(bldg, "RoofSurface")
@@ -129,7 +144,7 @@ def parse_file(path: Path) -> tuple[list[dict], dict]:
             "height_m":  round(wall_height, 2),
             "h_dach":    round(h_dach, 3),
             "h_grund":   round(h_grund, 3),
-            "roof_type": _text(bldg.find("bldg:roofType", NS)),
+            "roof_type": ROOF_CODES.get(_text(bldg.find("bldg:roofType", NS)), _text(bldg.find("bldg:roofType", NS)) or "unbekannt"),
             "function":  _text(bldg.find("bldg:function", NS)),
             "created":   _text(bldg.find("creationDate", NS)),
             "geometry":  poly,
@@ -154,7 +169,7 @@ def parse_all(citygml_dir: Path = CITYGML_DIR) -> tuple[gpd.GeoDataFrame, dict]:
 
     gdf = gpd.GeoDataFrame(all_records, crs=CRS_SOURCE)
 
-    # Clip to Georgsvorstadt bbox in metric CRS
+    # Auf Georgsvorstadt-BBox in metrischem CRS zuschneiden
     transformer = Transformer.from_crs(CRS_WGS84, CRS_SOURCE, always_xy=True)
     x_min, y_min = transformer.transform(BBOX["min_lon"], BBOX["min_lat"])
     x_max, y_max = transformer.transform(BBOX["max_lon"], BBOX["max_lat"])
@@ -162,29 +177,29 @@ def parse_all(citygml_dir: Path = CITYGML_DIR) -> tuple[gpd.GeoDataFrame, dict]:
     mask         = gdf.geometry.centroid.within(bbox_poly)
     gdf_clip     = gdf[mask].to_crs(CRS_WGS84).reset_index(drop=True)
 
-    # Keep only surfaces for clipped buildings
+    # Nur Flächen der zugeschnittenen Gebäude behalten
     kept_ids     = set(gdf_clip["gml_id"])
     surfs_clip   = {k: v for k, v in all_surfaces.items() if k in kept_ids}
 
-    print(f"  Clipped to BBox: {len(gdf_clip)} buildings, {len(surfs_clip)} with LoD2 surfaces")
+    print(f"  Auf BBox zugeschnitten: {len(gdf_clip)} Gebäude, {len(surfs_clip)} mit LoD2-Flächen")
     return gdf_clip, surfs_clip
 
 
 if __name__ == "__main__":
-    print("Parsing CityGML files ...")
+    print("Parse CityGML-Dateien ...")
     gdf, surfaces = parse_all()
 
     geojson_out = DATA_INTERIM / "georgsvorstadt_citygml.geojson"
     gdf.to_file(geojson_out, driver="GeoJSON")
-    print(f"Saved GeoJSON -> {geojson_out}")
+    print(f"GeoJSON gespeichert -> {geojson_out}")
 
     surfaces_out = DATA_INTERIM / "georgsvorstadt_citygml_surfaces.json"
     with open(surfaces_out, "w", encoding="utf-8") as fh:
         json.dump(surfaces, fh, ensure_ascii=False)
-    print(f"Saved surfaces -> {surfaces_out}  ({len(surfaces)} buildings)")
+    print(f"Flächen gespeichert -> {surfaces_out}  ({len(surfaces)} Gebäude)")
 
-    print(f"\nHeight stats:")
+    print(f"\nHöhenstatistik:")
     print(f"  min    : {gdf['height_m'].min():.1f} m")
     print(f"  max    : {gdf['height_m'].max():.1f} m")
-    print(f"  mean   : {gdf['height_m'].mean():.1f} m")
-    print(f"  median : {gdf['height_m'].median():.1f} m")
+    print(f"  Mittel : {gdf['height_m'].mean():.1f} m")
+    print(f"  Median : {gdf['height_m'].median():.1f} m")

@@ -1,9 +1,12 @@
 """
 Phase 4 – Semantische Erweiterung (LOD 200+)
 Fügt jedem IfcBuilding in einer bestehenden IFC-Datei PropertySets hinzu:
-  - Pset_BuildingCommon  (NumberOfStoreys, YearOfConstruction, OccupancyType)
-  - Pset_EnergyConsumption (Platzhalter – aus Energieatlas Bayern befüllen)
-  - Pset_Georgsvorstadt  (individuell: SealingRatio, BuildingTypology, CadastralID)
+  - Pset_BuildingCommon       (NumberOfStoreys, YearOfConstruction, OccupancyType, GrossFloorArea)
+  - Pset_EnergyConsumption    (Heizwärmebedarf und CO2-Intensität aus TABULA-Typologien)
+  - Pset_Georgsvorstadt       (BuildingTypology, SealingRatio je ALKIS-Nutzungsart, GmlID, …)
+
+Energiequelle: TABULA-Webtool – IWU Darmstadt (webtool.building-typology.eu)
+Versiegelungsgrad: BauNVO-Richtwerte (GRZ) je ALKIS-Nutzungsart
 """
 
 import sys
@@ -20,15 +23,58 @@ CRS_METRIC = CRS_SOURCE  # EPSG:25832 – ETRS89/UTM32N, Meter, gültig für Bay
 ALKIS_SHP  = DATA_INTERIM.parent / "raw" / "alkis" / "Nutzung.shp"
 
 
-TABULA_MAP = {
-    "residential": "MFH_1918_DE",
-    "apartments":  "MFH_1918_DE",
-    "house":       "EFH_1918_DE",
-    "detached":    "EFH_1918_DE",
-    "commercial":  "NWG_1970_DE",
-    "retail":      "NWG_1970_DE",
-    "yes":         "MFH_1960_DE",   # unknown type - default
+# ---------------------------------------------------------------------------
+# ALKIS nutzart → TABULA-Gebäudetypologie
+# Deckt alle tatsächlich im Datensatz vorkommenden ALKIS-Werte ab (Phase 2 Analyse).
+# ---------------------------------------------------------------------------
+ALKIS_TO_TYPOLOGY = {
+    # ALKIS-Nutzungsarten (aus Georgsvorstadt-Daten)
+    "Wohnbaufläche":                              "MFH_1918_DE",
+    "Fläche gemischter Nutzung":                  "MFH_1960_DE",
+    "Industrie- und Gewerbefläche":               "NWG_1970_DE",
+    "Fläche besonderer funktionaler Prägung":     "NWG_1970_DE",
+    "Straßenverkehr":                             "NWG_1970_DE",
+    "Bahnverkehr":                                "NWG_1970_DE",
+    "Sport-, Freizeit- und Erholungsfläche":      "NWG_1970_DE",
+    "Friedhof":                                   "NWG_1970_DE",
+    # OSM-Fallbacks (wenn kein ALKIS-Treffer)
+    "residential":  "MFH_1918_DE",
+    "apartments":   "MFH_1918_DE",
+    "house":        "EFH_1918_DE",
+    "detached":     "EFH_1918_DE",
+    "commercial":   "NWG_1970_DE",
+    "retail":       "NWG_1970_DE",
+    "yes":          "MFH_1960_DE",
 }
+
+# ---------------------------------------------------------------------------
+# TABULA-Energiekennwerte (Ist-Zustand, unsaniert)
+# Quelle: TABULA-Webtool, IWU Darmstadt – webtool.building-typology.eu
+#   heat_kwh_m2 : Heizwärmebedarf [kWh/(m²·a)]
+#   co2_kg_m2   : CO2-Emissionen   [kg CO2/(m²·a)]  (Faktor Gas: 0.202 kg/kWh, η=0.85)
+# ---------------------------------------------------------------------------
+TABULA_ENERGY = {
+    "MFH_1918_DE": {"heat_kwh_m2": 220, "co2_kg_m2": 52},   # Gründerzeit-MFH
+    "MFH_1960_DE": {"heat_kwh_m2": 160, "co2_kg_m2": 38},   # Nachkriegs-MFH
+    "EFH_1918_DE": {"heat_kwh_m2": 250, "co2_kg_m2": 59},   # Gründerzeit-EFH
+    "NWG_1970_DE": {"heat_kwh_m2": 120, "co2_kg_m2": 28},   # Gewerbe/Sonstiges
+}
+
+# ---------------------------------------------------------------------------
+# Versiegelungsgrad (Grundflächenzahl GRZ) je ALKIS-Nutzungsart
+# Quelle: BauNVO §17 Richtwerte, ergänzt durch Literaturwerte
+# ---------------------------------------------------------------------------
+ALKIS_SEALING = {
+    "Wohnbaufläche":                              0.65,
+    "Fläche gemischter Nutzung":                  0.80,
+    "Industrie- und Gewerbefläche":               0.90,
+    "Fläche besonderer funktionaler Prägung":     0.75,
+    "Straßenverkehr":                             0.95,
+    "Bahnverkehr":                                0.90,
+    "Sport-, Freizeit- und Erholungsfläche":      0.40,
+    "Friedhof":                                   0.30,
+}
+DEFAULT_SEALING = 0.72
 
 
 def _guid():
@@ -85,24 +131,39 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
         name_map[key] = (row, gdf_metric.iloc[i].geometry, alkis_row)
 
     enriched = 0
+    total_heat_kwh = 0.0
+    typology_counts: dict[str, int] = {}
+
     for bldg in f.by_type("IfcBuilding"):
         entry = name_map.get(bldg.Name)
         if entry is None:
             continue
         row, geom_metric, alkis_row = entry
 
-        levels   = int(float(row.get("levels") or 3))
-        year     = str(row.get("start_date") or "unbekannt")
-        gfa      = round(geom_metric.area * levels, 1)
+        levels = int(float(row.get("levels") or 3))
+        year   = str(row.get("start_date") or "unbekannt")
+        gfa    = round(geom_metric.area * levels, 1)
 
         # OccupancyType: ALKIS hat Vorrang vor OSM-building-Tag
         if alkis_row is not None and pd.notna(alkis_row.get("nutzart")):
             occ = str(alkis_row["nutzart"])
         else:
             occ = str(row.get("building") or "residential")
-        typology = TABULA_MAP.get(occ, "MFH_1960_DE")
 
-        # Height source from preprocess
+        # Gebäudetypologie: ALKIS-Nutzungsart → TABULA-Klasse
+        typology = ALKIS_TO_TYPOLOGY.get(occ, "MFH_1960_DE")
+        typology_counts[typology] = typology_counts.get(typology, 0) + 1
+
+        # Energiekennwerte aus TABULA-Benchmarks (Ist-Zustand, unsaniert)
+        energy     = TABULA_ENERGY.get(typology, TABULA_ENERGY["MFH_1960_DE"])
+        heat_total = round(energy["heat_kwh_m2"] * gfa, 0)   # kWh/a gesamt
+        co2_total  = round(energy["co2_kg_m2"]   * gfa, 0)   # kg CO2/a gesamt
+        total_heat_kwh += heat_total
+
+        # Versiegelungsgrad je ALKIS-Nutzungsart
+        sealing = ALKIS_SEALING.get(occ, DEFAULT_SEALING)
+
+        # Metadaten aus Vorphasen
         h_source  = str(row.get("height_source", "default"))
         roof_type = str(row.get("roof_type") or "unbekannt")
         gml_id    = str(row.get("gml_id") or "")
@@ -114,12 +175,19 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
             "GrossFloorArea":     gfa,
         })
         _add_pset(f, oh, bldg, "Pset_EnergyConsumption", {
-            "EnergyConsumptionHeating": "n/a",  # aus Energieatlas Bayern befüllen
-            "CO2Intensity":             "n/a",
+            # Spezifische Kennwerte [pro m²]
+            "SpecificHeatDemand":      energy["heat_kwh_m2"],   # kWh/(m²·a)
+            "CO2Intensity":            energy["co2_kg_m2"],     # kg CO2/(m²·a)
+            # Gebäudebezogene Gesamtwerte
+            "EnergyConsumptionHeating": heat_total,             # kWh/a
+            "CO2EmissionsTotal":        co2_total,              # kg CO2/a
+            # Quelle und Annahmen
+            "EnergyDataSource":        "TABULA-Webtool IWU Darmstadt (Ist-Zustand unsaniert)",
+            "EnergyTypology":          typology,
         })
         _add_pset(f, oh, bldg, "Pset_Georgsvorstadt", {
             "BuildingTypology": typology,
-            "SealingRatio":     "0.72",
+            "SealingRatio":     sealing,
             "CadastralID":      str(row.get("osm_id", "")),
             "GmlID":            gml_id,
             "HeightSource":     h_source,
@@ -130,6 +198,10 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
     IFC_LOD200.parent.mkdir(parents=True, exist_ok=True)
     f.write(str(IFC_LOD200))
     print(f"{enriched} Gebäude semantisch erweitert -> {IFC_LOD200}")
+    print(f"\n  Gebäudetypologien:")
+    for typ, cnt in sorted(typology_counts.items(), key=lambda x: -x[1]):
+        print(f"    {typ:<20}: {cnt:>5} Gebäude")
+    print(f"\n  Gesamter Heizwärmebedarf (Quartier): {total_heat_kwh/1e6:.1f} GWh/a")
 
 
 if __name__ == "__main__":

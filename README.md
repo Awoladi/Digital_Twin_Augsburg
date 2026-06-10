@@ -1,13 +1,22 @@
 # Digital Twin Augsburg – Georgsvorstadt
 
 Automatisierter GIS→IFC-Workflow für das Quartier Georgsvorstadt (Augsburg, ca. 12 ha, ~2.140 Gebäude).
-Open-Data-Quellen (BayernAtlas LoD2, ALKIS, OSM) werden vollautomatisch zu einem IFC 4 Digital Twin mit semantischen PropertySets verarbeitet.
+Open-Data-Quellen (BayernAtlas LoD2, ALKIS, OSM) werden vollautomatisch zu einem IFC 4 Digital Twin mit semantischen PropertySets und energetischen Kennwerten verarbeitet.
 
 **Testquartier:** 48.363° N, 10.898° O · Blockrandbebauung 1880–1930 · Nutzung WA/MI/MK
 
 ---
 
 ## Entwicklungs-Timeline
+
+### 2026-06-10 – Energetische Kennwerte, Versiegelungsgrad & Typologie (finale Abgabe)
+- **`04_enrich_semantics.py` vollständig überarbeitet:**
+  - **TABULA-Energiewerte** (IWU Darmstadt, Ist-Zustand): `SpecificHeatDemand`, `CO2Intensity`, `EnergyConsumptionHeating`, `CO2EmissionsTotal` — alle 2.140 Gebäude mit echten Werten (statt Platzhaltern)
+  - **Versiegelungsgrad je Gebäude** (`SealingRatio`) aus ALKIS-Nutzungsart (BauNVO-Richtwerte): WA=0.65 · MI=0.80 · Gewerbe=0.90 · Sondergebiet=0.75 statt globalem Fixwert 0.72
+  - **TABULA-Mapping korrigiert**: deckt jetzt alle echten ALKIS-`nutzart`-Werte ab (`Wohnbaufläche` → MFH_1918_DE, `Fläche gemischter Nutzung` → MFH_1960_DE, etc.)
+  - **Quartiersbilanz**: 325,6 GWh/a Heizwärmebedarf · 76.740 t CO2/a
+- **`05_evaluate.py` erweitert**: Typologieverteilung, Energiebilanz-Zusammenfassung im Qualitätsbericht
+- Alle Kommentare, Docstrings und Ausgaben auf Deutsch; Dachtyp-Codes in Klartextnamen übersetzt
 
 ### 2026-05-04 – BayernAtlas LoD2 & ALKIS integriert
 - **`06_parse_citygml.py` (neu):** Parst LoD2-GML-Kacheln des BayernAtlas, extrahiert amtliche Gebäudehöhen (`NiedrigsteTraufe − HoeheGrund`), Grundrisse und Dachtypen; Clip auf Georgsvorstadt-BBox in metrischem CRS; **2.104 Gebäude mit offiziellen Höhen**
@@ -83,6 +92,27 @@ BayernAtlas LoD2   ALKIS Nutzung   OpenStreetMap
 | Default-Fallback (9,6 m) | – | 98 | 5% |
 | ALKIS Nutzungsklasse | integriert | 2.140 / 2.140 | **100%** |
 
+### Energetische Kennwerte (TABULA, Ist-Zustand unsaniert)
+
+| Typologie | Gebäude | Anteil | Heizwärmebedarf | CO2-Intensität |
+|-----------|---------|--------|-----------------|----------------|
+| MFH_1918_DE (Gründerzeit) | 951 | 44% | 220 kWh/(m²·a) | 52 kg CO2/(m²·a) |
+| MFH_1960_DE (Nachkrieg/Mischnutzung) | 723 | 34% | 160 kWh/(m²·a) | 38 kg CO2/(m²·a) |
+| NWG_1970_DE (Gewerbe/öffentlich) | 466 | 22% | 120 kWh/(m²·a) | 28 kg CO2/(m²·a) |
+| **Quartier gesamt** | **2.140** | – | **325,6 GWh/a** | **76.740 t CO2/a** |
+
+> Quelle: TABULA-Webtool, IWU Darmstadt – webtool.building-typology.eu · Ist-Zustand (unsaniert)
+
+### Versiegelungsgrad je ALKIS-Nutzungsart (BauNVO-Richtwerte)
+
+| ALKIS-Nutzungsart | Gebäude | SealingRatio |
+|-------------------|---------|--------------|
+| Wohnbaufläche | 951 | 0,65 |
+| Fläche gemischter Nutzung | 719 | 0,80 |
+| Industrie-/Gewerbefläche | 224 | 0,90 |
+| Fläche besonderer funktionaler Prägung | 180 | 0,75 |
+| Sonstige (Verkehr, Sport, Friedhof) | 66 | 0,30–0,95 |
+
 ---
 
 ## Installation
@@ -126,8 +156,8 @@ Die aktuelle IFC-Datei ist `data/output/ifc/georgsvorstadt_LOD200.ifc`.
 | OpenStreetMap | Gebäudegrundrisse, Höhentags | GeoJSON (Overpass API) | automatisch via `01_fetch_data.py` | ✓ aktiv |
 | BayernAtlas (LDBV) | LoD2 Gebäudemodelle, amtl. Höhen | CityGML | https://www.ldbv.bayern.de/produkte/3dgeo/3d_gebaeude.html | ✓ integriert |
 | ALKIS Bayern | Nutzungsklassifikation | SHP | GDI-Bayern Portal | ✓ integriert |
-| Bayerischer Energieatlas | Energiebedarf je Quartier | CSV/WMS | https://www.energieatlas.bayern.de | geplant |
-| TABULA | Gebäudetypologien, U-Werte | CSV | https://webtool.building-typology.eu | Mapping vorhanden |
+| TABULA (IWU Darmstadt) | Gebäudetypologien, Energiekennwerte | Lookup-Tabelle | https://webtool.building-typology.eu | ✓ integriert |
+| Bayerischer Energieatlas | Gemessener Energiebedarf je Quartier | CSV/WMS | https://www.energieatlas.bayern.de | offen – als Messdatenabgleich |
 
 Rohdaten gehören nach `data/raw/citygml/` (BayernAtlas) bzw. `data/raw/alkis/` (ALKIS) — nicht versioniert.
 
@@ -143,7 +173,7 @@ Rohdaten gehören nach `data/raw/citygml/` (BayernAtlas) bzw. `data/raw/alkis/` 
 | IfcBuildingStorey | Elevation, Name | LoD2 / OSM | 100 |
 | IfcBuildingElementProxy | Geometry (ExtrudedAreaSolid) | CityGML / OSM | 100 |
 | Pset_BuildingCommon | NumberOfStoreys, YearOfConstruction, OccupancyType, GrossFloorArea | ALKIS / OSM | 200+ |
-| Pset_EnergyConsumption | EnergyConsumptionHeating, CO2Intensity | Energieatlas Bayern (geplant) | Semantik |
+| Pset_EnergyConsumption | SpecificHeatDemand [kWh/(m²·a)], CO2Intensity [kg/(m²·a)], EnergyConsumptionHeating [kWh/a], CO2EmissionsTotal [kg/a], EnergyTypology, EnergyDataSource | TABULA IWU Darmstadt | Semantik |
 | Pset_Georgsvorstadt | BuildingTypology, SealingRatio, CadastralID, GmlID, HeightSource, RoofType | ALKIS / CityGML / TABULA | Semantik |
 
 ---
@@ -173,6 +203,27 @@ Digital_Twin_Augsburg/
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+## Skalierbarkeit auf ganz Augsburg
+
+Die Pipeline ist vollständig skalierbar — der Untersuchungsbereich ist über eine einzige Variable steuerbar:
+
+```python
+# configs/settings.py – BBOX anpassen für ganz Augsburg:
+BBOX = {
+    "min_lon": 10.820,  "min_lat": 48.310,
+    "max_lon": 11.000,  "max_lat": 48.430,
+}
+```
+
+Weitere CityGML-Kacheln des BayernAtlas (kostenlos über geodaten.bayern.de) in `data/raw/citygml/` ablegen — Phase 6 verarbeitet alle `.gml`-Dateien automatisch. Augsburg umfasst ca. 75.000 Gebäude; Rechenzeit schätzungsweise 10–15 Minuten.
+
+**Offene Datenlücken:**
+- **Flurstücksnummern** (CadastralID): aktuell OSM-IDs; amtliche Flurstückskennzeichen via ALKIS-Flurstück-WFS der Bayerischen Vermessungsverwaltung nachrüstbar
+- **YearOfConstruction**: nur 3% der Gebäude haben OSM-`start_date`-Tags; Gebäudealter aus ALKIS-Gebäudeumriss-Daten (Basiskarte) erweiterbar
+- **Energiemessdaten**: TABULA-Benchmarks sind Typologiemittelwerte; Abgleich mit Energieatlas Bayern für gemessene Verbräuche empfohlen
 
 ---
 

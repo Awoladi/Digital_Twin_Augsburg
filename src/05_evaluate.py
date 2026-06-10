@@ -13,8 +13,9 @@ import ifcopenshell
 import ifcopenshell.util.element as ifc_util
 
 REQUIRED_PSETS = {
-    "Pset_BuildingCommon": ["NumberOfStoreys", "YearOfConstruction", "OccupancyType", "GrossFloorArea"],
-    "Pset_Georgsvorstadt": ["BuildingTypology", "CadastralID"],
+    "Pset_BuildingCommon":    ["NumberOfStoreys", "YearOfConstruction", "OccupancyType", "GrossFloorArea"],
+    "Pset_EnergyConsumption": ["SpecificHeatDemand", "CO2Intensity", "EnergyConsumptionHeating"],
+    "Pset_Georgsvorstadt":    ["BuildingTypology", "SealingRatio", "CadastralID"],
 }
 
 DEFAULT_HEIGHT = DEFAULT_STOREYS * DEFAULT_STOREY_HEIGHT  # 9,6 m
@@ -89,13 +90,47 @@ def evaluate(ifc_path: Path) -> None:
             print(f"    {key:<48} {count:>4}/{total} ({ratio*100:.0f}%)")
 
     # ------------------------------------------------------------------
+    # Energie- und Typologie-Zusammenfassung
+    # ------------------------------------------------------------------
+    typology_counts: dict[str, int] = {}
+    heat_total_gwh = 0.0
+    co2_total_t    = 0.0
+
+    for bldg in buildings:
+        psets = ifc_util.get_psets(bldg)
+        ep = psets.get("Pset_EnergyConsumption", {})
+        gp = psets.get("Pset_Georgsvorstadt", {})
+
+        try:
+            heat_total_gwh += float(ep.get("EnergyConsumptionHeating", 0)) / 1e6
+        except (ValueError, TypeError):
+            pass
+        try:
+            co2_total_t += float(ep.get("CO2EmissionsTotal", 0)) / 1e3
+        except (ValueError, TypeError):
+            pass
+
+        typ = str(gp.get("BuildingTypology", "unbekannt"))
+        typology_counts[typ] = typology_counts.get(typ, 0) + 1
+
+    print(f"\n  Gebäudetypologien (TABULA):")
+    for typ, cnt in sorted(typology_counts.items(), key=lambda x: -x[1]):
+        ratio = cnt / total if total else 0
+        print(f"    {typ:<20} {_bar(ratio)} {cnt:>4} ({ratio*100:.0f}%)")
+
+    print(f"\n  Energiebilanz Quartier (TABULA, Ist-Zustand):")
+    print(f"    Heizwaermebedarf gesamt : {heat_total_gwh:.1f} GWh/a")
+    print(f"    CO2-Emissionen gesamt   : {co2_total_t:.0f} t CO2/a")
+    if total:
+        print(f"    CO2 je Gebaeude (Mittel): {co2_total_t*1000/total:.0f} kg CO2/a")
+
+    # ------------------------------------------------------------------
     # Bekannte Lücken
     # ------------------------------------------------------------------
     print(f"\n  Bekannte Luecken:")
-    print(f"    - Dachgeometrie (LoD2 CityGML nicht integriert)")
     print(f"    - Fenster, Tueren, Innenraeume (erfordert LoD3+)")
     print(f"    - YearOfConstruction: nur OSM-start_date-Tag genutzt")
-    print(f"    - EnergyConsumption: Platzhalter, benoetigt Energieatlas Bayern")
+    print(f"    - Energiewerte: TABULA-Benchmarks (Ist-Zustand), kein Messdatenabgleich")
 
     elapsed = time.time() - t0
     print(f"\n  Verarbeitet in {elapsed:.2f}s")

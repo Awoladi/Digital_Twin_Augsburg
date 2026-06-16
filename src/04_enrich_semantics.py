@@ -4,8 +4,12 @@ Fügt jedem IfcBuilding in einer bestehenden IFC-Datei PropertySets hinzu:
   - Pset_BuildingCommon       (NumberOfStoreys, YearOfConstruction, OccupancyType, GrossFloorArea)
   - Pset_EnergyConsumption    (Heizwärmebedarf und CO2-Intensität aus TABULA-Typologien)
   - Pset_Georgsvorstadt       (BuildingTypology, SealingRatio je ALKIS-Nutzungsart, GmlID, …)
+  - Pset_Adresse              (Straße, Hausnummer, PLZ, Stadt – aus OSM addr:* Tags)
+  - Pset_Denkmalschutz        (BLfD-Referenz, Schutzumfang – für 73 Denkmäler in OSM)
+  - Pset_Gebaeudebeschreibung (Farbe, Material, Architekturstil, Architekt – aus OSM-Tags)
 
-Energiequelle: TABULA-Webtool – IWU Darmstadt (webtool.building-typology.eu)
+Baujahr-Priorität: Wikidata (08_enrich_wikidata.py) > OSM start_date > ALKIS-Baujahr
+Energiequelle:     TABULA-Webtool – IWU Darmstadt (webtool.building-typology.eu)
 Versiegelungsgrad: BauNVO-Richtwerte (GRZ) je ALKIS-Nutzungsart
 """
 
@@ -168,6 +172,11 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
         roof_type = str(row.get("roof_type") or "unbekannt")
         gml_id    = str(row.get("gml_id") or "")
 
+        # Baujahr: Wikidata (08) > OSM start_date
+        year_osm = str(row.get("start_date") or "").strip()
+        year_wd  = str(row.get("wd_baujahr") or "").strip()
+        year     = year_wd or year_osm or "unbekannt"
+
         _add_pset(f, oh, bldg, "Pset_BuildingCommon", {
             "NumberOfStoreys":    levels,
             "YearOfConstruction": year,
@@ -175,15 +184,12 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
             "GrossFloorArea":     gfa,
         })
         _add_pset(f, oh, bldg, "Pset_EnergyConsumption", {
-            # Spezifische Kennwerte [pro m²]
-            "SpecificHeatDemand":      energy["heat_kwh_m2"],   # kWh/(m²·a)
-            "CO2Intensity":            energy["co2_kg_m2"],     # kg CO2/(m²·a)
-            # Gebäudebezogene Gesamtwerte
-            "EnergyConsumptionHeating": heat_total,             # kWh/a
-            "CO2EmissionsTotal":        co2_total,              # kg CO2/a
-            # Quelle und Annahmen
-            "EnergyDataSource":        "TABULA-Webtool IWU Darmstadt (Ist-Zustand unsaniert)",
-            "EnergyTypology":          typology,
+            "SpecificHeatDemand":       energy["heat_kwh_m2"],
+            "CO2Intensity":             energy["co2_kg_m2"],
+            "EnergyConsumptionHeating": heat_total,
+            "CO2EmissionsTotal":        co2_total,
+            "EnergyDataSource":         "TABULA-Webtool IWU Darmstadt (Ist-Zustand unsaniert)",
+            "EnergyTypology":           typology,
         })
         _add_pset(f, oh, bldg, "Pset_Georgsvorstadt", {
             "BuildingTypology": typology,
@@ -193,6 +199,52 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
             "HeightSource":     h_source,
             "RoofType":         roof_type,
         })
+
+        # Pset_Adresse – aus OSM addr:* Tags (62% der Gebäude)
+        street = str(row.get("addr_street",      "") or "").strip()
+        hsnr   = str(row.get("addr_housenumber", "") or "").strip()
+        plz    = str(row.get("addr_postcode",    "") or "").strip()
+        city   = str(row.get("addr_city",        "") or "").strip()
+        if any([street, hsnr, plz, city]):
+            _add_pset(f, oh, bldg, "Pset_Adresse", {
+                "Strasse":       street,
+                "Hausnummer":    hsnr,
+                "Postleitzahl":  plz,
+                "Stadt":         city,
+            })
+
+        # Pset_Denkmalschutz – BLfD-Daten aus OSM (73 Gebäude)
+        ref_blfd = str(row.get("ref_blfd",      "") or "").strip()
+        blfd_kr  = str(row.get("blfd_criteria", "") or "").strip()
+        heritage = str(row.get("heritage",      "") or "").strip()
+        if any([ref_blfd, blfd_kr, heritage]):
+            _add_pset(f, oh, bldg, "Pset_Denkmalschutz", {
+                "IstDenkmalgeschuetzt": "ja",
+                "BLfD_Referenz":        ref_blfd,
+                "Schutzumfang":         blfd_kr,
+                "Denkmalstufe":         heritage,
+                "Denkmalbehoerde":      str(row.get("heritage_operator", "") or "").strip(),
+            })
+
+        # Pset_Gebaeudebeschreibung – visuelle + historische Metadaten aus OSM/Wikidata
+        colour   = str(row.get("building_colour",       "") or "").strip()
+        material = str(row.get("building_material",     "") or "").strip()
+        archstil = str(row.get("building_architecture", "") or "").strip()
+        architkt = str(row.get("architect",             "") or "").strip()
+        wd_arch  = str(row.get("wd_architekt",          "") or "").strip()
+        wd_stil  = str(row.get("wd_stil",               "") or "").strip()
+        roof_col = str(row.get("osm_roof_colour",       "") or "").strip()
+        roof_mat = str(row.get("osm_roof_material",     "") or "").strip()
+        if any([colour, material, archstil, architkt, wd_arch, wd_stil, roof_col, roof_mat]):
+            _add_pset(f, oh, bldg, "Pset_Gebaeudebeschreibung", {
+                "Fassadenfarbe":    colour,
+                "Fassadenmaterial": material,
+                "Architekturstil":  wd_stil or archstil,
+                "Architekt":        wd_arch or architkt,
+                "Dachfarbe":        roof_col,
+                "Dachmaterial":     roof_mat,
+            })
+
         enriched += 1
 
     IFC_LOD200.parent.mkdir(parents=True, exist_ok=True)
@@ -205,8 +257,13 @@ def enrich(ifc_path: Path, geojson_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    clean = DATA_INTERIM / "georgsvorstadt_clean.geojson"
+    # Wikidata-angereicherte GeoJSON bevorzugen (08_enrich_wikidata.py), falls vorhanden
+    wikidata_geojson = DATA_INTERIM / "georgsvorstadt_clean_wikidata.geojson"
+    clean            = DATA_INTERIM / "georgsvorstadt_clean.geojson"
+    geojson_path     = wikidata_geojson if wikidata_geojson.exists() else clean
+    if geojson_path == wikidata_geojson:
+        print("  Wikidata-angereicherte GeoJSON wird verwendet.")
     if not IFC_OUTPUT.exists():
         print("Zuerst 03_generate_ifc.py ausführen.")
         sys.exit(1)
-    enrich(IFC_OUTPUT, clean)
+    enrich(IFC_OUTPUT, geojson_path)

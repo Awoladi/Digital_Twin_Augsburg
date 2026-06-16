@@ -18,6 +18,15 @@ REQUIRED_PSETS = {
     "Pset_Georgsvorstadt":    ["BuildingTypology", "SealingRatio", "CadastralID"],
 }
 
+# Optionale Psets – nur gezählt, nicht als Pflichtfeld bewertet
+OPTIONAL_PSETS = {
+    "Pset_Adresse":              ["Strasse", "Hausnummer"],
+    "Pset_Denkmalschutz":        ["BLfD_Referenz", "Schutzumfang"],
+    "Pset_Gebaeudebeschreibung": ["Architekt", "Architekturstil"],
+    "Pset_SolarPotential":       ["PV_Yield_kWh_a"],
+    "Pset_WikidataInfo":         ["WikidataID", "Baujahr_Wikidata"],
+}
+
 DEFAULT_HEIGHT = DEFAULT_STOREYS * DEFAULT_STOREY_HEIGHT  # 9,6 m
 
 
@@ -76,8 +85,21 @@ def evaluate(ifc_path: Path) -> None:
                     if val and str(val) not in ("n/a", "unbekannt", ""):
                         attr_hits[key] = attr_hits.get(key, 0) + 1
 
-    print(f"\n  PropertySet-Abdeckung:")
+    # Optionale Psets zählen
+    opt_hits = {pset: 0 for pset in OPTIONAL_PSETS}
+    for bldg in buildings:
+        psets = ifc_util.get_psets(bldg)
+        for pset_name in OPTIONAL_PSETS:
+            if pset_name in psets:
+                opt_hits[pset_name] += 1
+
+    print(f"\n  PropertySet-Abdeckung (Pflicht):")
     for pset_name, count in pset_hits.items():
+        ratio = count / total if total else 0
+        print(f"    {pset_name:<30} {_bar(ratio)} {count}/{total} ({ratio*100:.0f}%)")
+
+    print(f"\n  PropertySet-Abdeckung (Optional / Open Data):")
+    for pset_name, count in opt_hits.items():
         ratio = count / total if total else 0
         print(f"    {pset_name:<30} {_bar(ratio)} {count}/{total} ({ratio*100:.0f}%)")
 
@@ -127,10 +149,11 @@ def evaluate(ifc_path: Path) -> None:
     # ------------------------------------------------------------------
     # Bekannte Lücken
     # ------------------------------------------------------------------
-    print(f"\n  Bekannte Luecken:")
+    print(f"\n  Bekannte Luecken (strukturell):")
     print(f"    - Fenster, Tueren, Innenraeume (erfordert LoD3+)")
-    print(f"    - YearOfConstruction: nur OSM-start_date-Tag genutzt")
     print(f"    - Energiewerte: TABULA-Benchmarks (Ist-Zustand), kein Messdatenabgleich")
+    print(f"    - Solardaten (Pset_SolarPotential): 07_enrich_solar.py separat ausfuehren")
+    print(f"    - Wikidata-Baujahr (Pset_WikidataInfo): 08_enrich_wikidata.py separat ausfuehren")
 
     elapsed = time.time() - t0
     print(f"\n  Verarbeitet in {elapsed:.2f}s")

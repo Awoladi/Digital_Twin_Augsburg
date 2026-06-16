@@ -1,6 +1,8 @@
 """
 Phase 1 – Datenbeschaffung
 Lädt OSM-Gebäudegrundrisse für die Georgsvorstadt über die Overpass API.
+Extrahiert alle relevanten Tags: Adressen, Dachdetails, Denkmalschutz (BLfD),
+Wikidata-Verknüpfungen, Farben, Materialien, Architekt.
 BayernAtlas (LoD2) und ALKIS müssen manuell heruntergeladen werden – siehe README.
 """
 
@@ -54,12 +56,45 @@ def osm_to_geojson(osm: dict) -> dict:
             "type": "Feature",
             "geometry": {"type": "Polygon", "coordinates": [coords]},
             "properties": {
+                # --- Basis ---
                 "osm_id":     el["id"],
                 "name":       tags.get("name", ""),
                 "building":   tags.get("building", "yes"),
                 "levels":     tags.get("building:levels", ""),
                 "height":     tags.get("height", ""),
                 "start_date": tags.get("start_date", ""),
+                # --- Adresse (OSM addr:* Tags – 62% der Gebäude) ---
+                "addr_street":      tags.get("addr:street", ""),
+                "addr_housenumber": tags.get("addr:housenumber", ""),
+                "addr_postcode":    tags.get("addr:postcode", ""),
+                "addr_city":        tags.get("addr:city", ""),
+                # --- Dachdetails (OSM – ergänzt CityGML) ---
+                "osm_roof_shape":       tags.get("roof:shape", ""),
+                "osm_roof_colour":      tags.get("roof:colour", ""),
+                "osm_roof_material":    tags.get("roof:material", ""),
+                "osm_roof_levels":      tags.get("roof:levels", ""),
+                "osm_roof_orientation": tags.get("roof:orientation", ""),
+                "osm_roof_direction":   tags.get("roof:direction", ""),
+                "osm_roof_height":      tags.get("roof:height", ""),
+                # --- Gebäudedetails ---
+                "building_colour":       tags.get("building:colour", ""),
+                "building_material":     tags.get("building:material", ""),
+                "building_architecture": tags.get("building:architecture", ""),
+                # --- Denkmalschutz (BLfD – Bayerisches Landesamt für Denkmalpflege) ---
+                "heritage":          tags.get("heritage", ""),
+                "heritage_operator": tags.get("heritage:operator", ""),
+                "ref_blfd":          tags.get("ref:BLfD", ""),
+                "blfd_criteria":     tags.get("BLfD:criteria", ""),
+                # --- Verknüpfungen zu externen Datenbanken ---
+                "wikidata":  tags.get("wikidata", ""),
+                "wikipedia": tags.get("wikipedia", ""),
+                "architect": tags.get("architect", ""),
+                # --- Nutzungsdetails ---
+                "amenity":  tags.get("amenity", ""),
+                "historic": tags.get("historic", ""),
+                "tourism":  tags.get("tourism", ""),
+                "religion": tags.get("religion", ""),
+                "operator": tags.get("operator", ""),
             },
         })
     return {"type": "FeatureCollection", "features": features}
@@ -77,4 +112,14 @@ if __name__ == "__main__":
     BUILDINGS_GEOJSON.parent.mkdir(parents=True, exist_ok=True)
     BUILDINGS_GEOJSON.write_text(json.dumps(gj, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"  {len(gj['features'])} Gebäude gespeichert -> {BUILDINGS_GEOJSON}")
+    # Statistik
+    addr  = sum(1 for f in gj["features"] if f["properties"].get("addr_street"))
+    denkm = sum(1 for f in gj["features"] if f["properties"].get("ref_blfd"))
+    wiki  = sum(1 for f in gj["features"] if f["properties"].get("wikidata"))
+    roof  = sum(1 for f in gj["features"] if f["properties"].get("osm_roof_shape"))
+    total = len(gj["features"])
+    print(f"  {total} Gebäude gespeichert -> {BUILDINGS_GEOJSON}")
+    print(f"  Adressen          : {addr}/{total} ({addr/total*100:.0f}%)")
+    print(f"  Denkmalschutz     : {denkm}/{total} ({denkm/total*100:.0f}%)")
+    print(f"  Wikidata-Links    : {wiki}/{total} ({wiki/total*100:.0f}%)")
+    print(f"  Dachform (OSM)    : {roof}/{total} ({roof/total*100:.0f}%)")

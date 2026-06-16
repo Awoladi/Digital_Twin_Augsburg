@@ -5,6 +5,9 @@ Lädt OSM-Gebäudegrundrisse, bereinigt die Geometrie und ergänzt Höhen:
   2. CityGML-LoD2-Spatial-Join (falls georgsvorstadt_citygml.geojson vorhanden)
   3. Standard-Fallback (DEFAULT_STOREYS * DEFAULT_STOREY_HEIGHT)
 
+Dachform-Fallback: OSM roof:shape → deutsches Kürzel, wenn CityGML keinen roof_type liefert.
+Alle neuen OSM-Spalten (Adresse, Denkmal, Wikidata, …) werden durchgereicht.
+
 Nach 01_fetch_data.py und (optional) 06_parse_citygml.py ausführen.
 """
 
@@ -21,6 +24,24 @@ import pandas as pd
 
 
 CITYGML_GEOJSON = DATA_INTERIM / "georgsvorstadt_citygml.geojson"
+
+# OSM roof:shape → deutsche Dachformbezeichnung (als Fallback wenn CityGML kein roof_type hat)
+OSM_ROOF_SHAPES = {
+    "gabled":       "Satteldach",
+    "flat":         "Flachdach",
+    "hipped":       "Walmdach",
+    "mansard":      "Mansarddach",
+    "skillion":     "Pultdach",
+    "pyramidal":    "Zeltdach",
+    "half-hipped":  "Krüppelwalmdach",
+    "side_hipped":  "Krüppelwalmdach",
+    "saltbox":      "Pultdach",
+    "gambrel":      "Mansarddach",
+    "dome":         "Kuppeldach",
+    "onion":        "Zwiebelturm",
+    "round":        "Tonnendach",
+    "conical":      "Kegeldach",
+}
 
 
 def load_and_clean(path: Path) -> gpd.GeoDataFrame:
@@ -111,12 +132,28 @@ def preprocess(input_path: Path = BUILDINGS_GEOJSON) -> gpd.GeoDataFrame:
     gdf.loc[gdf["height_osm"].notna(),     "height_source"] = "osm_tag"
     gdf.loc[gdf["height_citygml"].notna(), "height_source"] = "citygml"
 
+    # Schritt 4: OSM roof:shape als Fallback für roof_type (wenn CityGML keinen Wert liefert)
+    if "osm_roof_shape" in gdf.columns:
+        osm_roof_mask = (
+            gdf["roof_type"].isna() | (gdf["roof_type"] == "") | (gdf["roof_type"] == "unbekannt")
+        ) & gdf["osm_roof_shape"].notna() & (gdf["osm_roof_shape"] != "")
+        gdf.loc[osm_roof_mask, "roof_type"] = (
+            gdf.loc[osm_roof_mask, "osm_roof_shape"].map(OSM_ROOF_SHAPES).fillna("Sonstiges")
+        )
+        osm_roof_count = osm_roof_mask.sum()
+        print(f"  Dachform-Fallback (OSM): {osm_roof_count} Gebäude ergänzt")
+
     # Statistik
     src_counts = gdf["height_source"].value_counts()
     print(f"  {len(gdf)} Gebäude | Höhen aus:")
     for src, cnt in src_counts.items():
         print(f"    {src:<12}: {cnt:>5}  ({cnt/len(gdf)*100:.0f}%)")
     print(f"  Höhenspanne: {gdf['height_m'].min():.1f} – {gdf['height_m'].max():.1f} m")
+
+    # Dachform-Statistik
+    if "roof_type" in gdf.columns:
+        roof_filled = gdf["roof_type"].notna() & (gdf["roof_type"] != "") & (gdf["roof_type"] != "unbekannt")
+        print(f"  Dachform bekannt: {roof_filled.sum()}/{len(gdf)} ({roof_filled.sum()/len(gdf)*100:.0f}%)")
 
     out = DATA_INTERIM / "georgsvorstadt_clean.geojson"
     gdf.to_file(out, driver="GeoJSON")
